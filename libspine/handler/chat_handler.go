@@ -41,6 +41,7 @@ type ChatHandler struct {
 	clients      map[string][]transport.Writer
 	clientsMu    sync.RWMutex
 	wsTransport  interface{} // WebSocket transport for broadcasting
+	staticPath   string      // 静态文件路径
 }
 
 // NewChatHandler 创建新的聊天处理器
@@ -55,6 +56,11 @@ func NewChatHandler() *ChatHandler {
 // SetWebSocketTransport 设置 WebSocket 传输层
 func (h *ChatHandler) SetWebSocketTransport(wsTransport interface{}) {
 	h.wsTransport = wsTransport
+}
+
+// SetStaticPath 设置静态文件路径
+func (h *ChatHandler) SetStaticPath(path string) {
+	h.staticPath = path
 }
 
 // Start 启动聊天处理器
