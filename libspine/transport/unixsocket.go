@@ -127,8 +127,9 @@ func (u *UnixSocketTransport) handleConnection(conn net.Conn) {
 
 	// 创建上下文
 	ctx := &Context{
-		ServerInfo: u.serverCtx.ServerInfo,
-		ConnInfo:   connInfo,
+		ServerInfo:        u.serverCtx.ServerInfo,
+		ConnInfo:          connInfo,
+		ConnectionManager: u.serverCtx.Connections,
 	}
 
 	// 连接关闭时从管理器移除

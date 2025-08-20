@@ -16,7 +16,6 @@ type ChatMessage struct {
 	User      string    `json:"user"`
 	Message   string    `json:"message"`
 	Timestamp time.Time `json:"timestamp"`
-	Room      string    `json:"room"`
 }
 
 // ChatRequest 聊天请求结构
@@ -35,11 +34,10 @@ type ChatResponse struct {
 
 // ChatHandler 聊天处理器
 type ChatHandler struct {
-	rooms        map[string][]*ChatMessage
+	messages     []*ChatMessage
 	mu           sync.RWMutex
-	broadcast    chan *ChatMessage
-	clients      map[string][]transport.Writer
-	clientsMu    sync.RWMutex
+	activeConns  map[string]bool // connectionID -> active
+	connectionsMu sync.RWMutex
 	wsTransport  interface{} // WebSocket transport for broadcasting
 	staticPath   string      // 静态文件路径
 }
@@ -47,9 +45,8 @@ type ChatHandler struct {
 // NewChatHandler 创建新的聊天处理器
 func NewChatHandler() *ChatHandler {
 	return &ChatHandler{
-		rooms:     make(map[string][]*ChatMessage),
-		broadcast: make(chan *ChatMessage, 100),
-		clients:   make(map[string][]transport.Writer),
+		messages:    make([]*ChatMessage, 0),
+		activeConns: make(map[string]bool),
 	}
 }
 
@@ -63,15 +60,6 @@ func (h *ChatHandler) SetStaticPath(path string) {
 	h.staticPath = path
 }
 
-// Start 启动聊天处理器
-func (h *ChatHandler) Start() {
-	go h.broadcastMessages()
-}
-
-// Stop 停止聊天处理器
-func (h *ChatHandler) Stop() {
-	close(h.broadcast)
-}
 
 // Handle 处理聊天请求
 func (h *ChatHandler) Handle(ctx *transport.Context, req transport.Reader, res transport.Writer) error {
@@ -103,9 +91,9 @@ func (h *ChatHandler) Handle(ctx *transport.Context, req transport.Reader, res t
 	case "GET":
 		return h.handleGetMessages(ctx, req, res, &chatReq)
 	case "JOIN":
-		return h.handleJoinRoom(ctx, req, res, &chatReq)
+		return h.handleJoin(ctx, req, res, &chatReq)
 	case "LEAVE":
-		return h.handleLeaveRoom(ctx, req, res, &chatReq)
+		return h.handleLeave(ctx, req, res, &chatReq)
 	default:
 		return h.writeError(res, "Method not allowed", 405)
 	}
@@ -126,9 +114,8 @@ func (h *ChatHandler) handlePostMessage(ctx *transport.Context, req transport.Re
 
 	user, _ := msgData["user"].(string)
 	message, _ := msgData["message"].(string)
-	room, _ := msgData["room"].(string)
 
-	if user == "" || message == "" || room == "" {
+	if user == "" || message == "" {
 		return h.writeError(res, "Missing required fields", 400)
 	}
 
@@ -137,15 +124,14 @@ func (h *ChatHandler) handlePostMessage(ctx *transport.Context, req transport.Re
 		User:      user,
 		Message:   message,
 		Timestamp: time.Now(),
-		Room:      room,
 	}
 
 	h.mu.Lock()
-	h.rooms[room] = append(h.rooms[room], msg)
+	h.messages = append(h.messages, msg)
 	h.mu.Unlock()
 
-	// 广播消息
-	h.broadcast <- msg
+	// 广播消息给所有活跃连接
+	h.broadcastToAll(ctx, msg)
 
 	return h.writeSuccess(res, map[string]interface{}{
 		"status":  "success",
@@ -155,115 +141,91 @@ func (h *ChatHandler) handlePostMessage(ctx *transport.Context, req transport.Re
 
 // handleGetMessages 处理获取消息
 func (h *ChatHandler) handleGetMessages(ctx *transport.Context, req transport.Reader, res transport.Writer, chatReq *ChatRequest) error {
-	room := chatReq.Path
-	if room == "" {
-		return h.writeError(res, "Room not specified", 400)
-	}
-
 	h.mu.RLock()
-	messages := h.rooms[room]
+	messages := make([]*ChatMessage, len(h.messages))
+	copy(messages, h.messages)
 	h.mu.RUnlock()
 
 	return h.writeSuccess(res, messages)
 }
 
-// handleJoinRoom 处理加入房间
-func (h *ChatHandler) handleJoinRoom(ctx *transport.Context, req transport.Reader, res transport.Writer, chatReq *ChatRequest) error {
-	var joinData map[string]interface{}
-	dataBytes, _ := json.Marshal(chatReq.Data)
-	json.Unmarshal(dataBytes, &joinData)
-
-	room, _ := joinData["room"].(string)
-	if room == "" {
-		return h.writeError(res, "Room not specified", 400)
+// handleJoin 处理加入聊天
+func (h *ChatHandler) handleJoin(ctx *transport.Context, req transport.Reader, res transport.Writer, chatReq *ChatRequest) error {
+	// 使用连接ID而不是Writer
+	if ctx.ConnInfo == nil {
+		return h.writeError(res, "Connection info not available", 400)
 	}
 
-	// 使用 ConnInfo 中的 Writer
-	writer := res
-	if ctx.ConnInfo != nil && ctx.ConnInfo.Writer != nil {
-		writer = ctx.ConnInfo.Writer
-	}
+	connID := ctx.ConnInfo.ID
 
-	h.clientsMu.Lock()
-	h.clients[room] = append(h.clients[room], writer)
-	h.clientsMu.Unlock()
+	h.connectionsMu.Lock()
+	h.activeConns[connID] = true
+	h.connectionsMu.Unlock()
 
 	return h.writeSuccess(res, map[string]interface{}{
 		"status":  "success",
-		"message": "Joined room",
+		"message": "Joined chat",
 	})
 }
 
-// handleLeaveRoom 处理离开房间
-func (h *ChatHandler) handleLeaveRoom(ctx *transport.Context, req transport.Reader, res transport.Writer, chatReq *ChatRequest) error {
-	var leaveData map[string]interface{}
-	dataBytes, _ := json.Marshal(chatReq.Data)
-	json.Unmarshal(dataBytes, &leaveData)
-
-	room, _ := leaveData["room"].(string)
-	if room == "" {
-		return h.writeError(res, "Room not specified", 400)
+// handleLeave 处理离开聊天
+func (h *ChatHandler) handleLeave(ctx *transport.Context, req transport.Reader, res transport.Writer, chatReq *ChatRequest) error {
+	// 使用连接ID而不是Writer
+	if ctx.ConnInfo == nil {
+		return h.writeError(res, "Connection info not available", 400)
 	}
 
-	// 使用 ConnInfo 中的 Writer
-	writer := res
-	if ctx.ConnInfo != nil && ctx.ConnInfo.Writer != nil {
-		writer = ctx.ConnInfo.Writer
-	}
+	connID := ctx.ConnInfo.ID
 
-	h.clientsMu.Lock()
-	defer h.clientsMu.Unlock()
-
-	if clients, exists := h.clients[room]; exists {
-		for i, client := range clients {
-			if client == writer {
-				h.clients[room] = append(clients[:i], clients[i+1:]...)
-				break
-			}
-		}
-	}
+	h.connectionsMu.Lock()
+	delete(h.activeConns, connID)
+	h.connectionsMu.Unlock()
 
 	return h.writeSuccess(res, map[string]interface{}{
 		"status":  "success",
-		"message": "Left room",
+		"message": "Left chat",
 	})
 }
 
-// broadcastMessages 广播消息
-func (h *ChatHandler) broadcastMessages() {
-	for msg := range h.broadcast {
-		h.clientsMu.RLock()
-		clients := h.clients[msg.Room]
-		h.clientsMu.RUnlock()
+// broadcastToAll 使用ConnectionManager向所有活跃连接广播消息
+func (h *ChatHandler) broadcastToAll(ctx *transport.Context, msg *ChatMessage) {
+	if ctx == nil || ctx.ConnectionManager == nil {
+		return
+	}
 
-		response := &ChatResponse{
-			Status: 200,
-			Data:    msg,
-		}
+	h.connectionsMu.RLock()
+	activeConnIDs := make([]string, 0, len(h.activeConns))
+	for connID := range h.activeConns {
+		activeConnIDs = append(activeConnIDs, connID)
+	}
+	h.connectionsMu.RUnlock()
 
-		data, _ := json.Marshal(response)
-		responseData := h.createBinaryMessage(data)
+	response := &ChatResponse{
+		Status: 200,
+		Data:    msg,
+	}
 
-		// 向传统客户端广播
-		for _, client := range clients {
-			if err := client.Write(responseData); err != nil {
-				// 移除失败的客户端
-				h.clientsMu.Lock()
-				for i, c := range h.clients[msg.Room] {
-					if c == client {
-						h.clients[msg.Room] = append(h.clients[msg.Room][:i], h.clients[msg.Room][i+1:]...)
-						break
-					}
+	data, _ := json.Marshal(response)
+	responseData := h.createBinaryMessage(data)
+
+	// 向所有活跃连接广播消息
+	for _, connID := range activeConnIDs {
+		if connInfo, exists := ctx.ConnectionManager.GetConnection(connID); exists {
+			if connInfo.Writer != nil {
+				if err := connInfo.Writer.Write(responseData); err != nil {
+					// 如果写入失败，从活跃连接中移除该连接
+					h.connectionsMu.Lock()
+					delete(h.activeConns, connID)
+					h.connectionsMu.Unlock()
 				}
-				h.clientsMu.Unlock()
 			}
 		}
+	}
 
-		// 向 WebSocket 客户端广播
-		if h.wsTransport != nil {
-			if wsTransport, ok := h.wsTransport.(interface{ Broadcast([]byte) error }); ok {
-				wsTransport.Broadcast(responseData)
-			}
+	// 向 WebSocket 客户端广播
+	if h.wsTransport != nil {
+		if wsTransport, ok := h.wsTransport.(interface{ Broadcast([]byte) error }); ok {
+			wsTransport.Broadcast(responseData)
 		}
 	}
 }

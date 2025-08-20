@@ -12,9 +12,7 @@ import (
 func TestChatHandler_Integration(t *testing.T) {
 	// 创建聊天处理器
 	chatHandler := handler.NewChatHandler()
-	chatHandler.Start()
-	defer chatHandler.Stop()
-
+	
 	helpers := handler.NewTestHelpers()
 	ctx := helpers.CreateTestContext()
 
@@ -120,25 +118,29 @@ func TestChatHandler_Integration(t *testing.T) {
 	}
 }
 
-func TestChatHandler_MultipleRoomsIntegration(t *testing.T) {
+func TestChatHandler_MultipleMessagesIntegration(t *testing.T) {
 	// 创建聊天处理器
 	chatHandler := handler.NewChatHandler()
-	chatHandler.Start()
-	defer chatHandler.Stop()
-
+	
 	helpers := handler.NewTestHelpers()
 	ctx := helpers.CreateTestContext()
 
-	// 测试多个房间的消息隔离
-	rooms := []string{"general", "random", "help"}
+	// 测试多个消息的发送
+	messages := []struct {
+		user    string
+		message string
+	}{
+		{"user_general", "Message from general"},
+		{"user_random", "Message from random"},
+		{"user_help", "Message from help"},
+	}
 	
-	// 向每个房间发送消息
-	for _, room := range rooms {
+	// 发送所有消息
+	for _, msg := range messages {
 		request := handler.NewMockReaderFromRequests([]*transport.Request{
 			helpers.CreateTestRequest("POST", "/chat", map[string]interface{}{
-				"user":    "user_" + room,
-				"message": "Message from " + room,
-				"room":    room,
+				"user":    msg.user,
+				"message": msg.message,
 			}),
 		})
 		
@@ -146,7 +148,7 @@ func TestChatHandler_MultipleRoomsIntegration(t *testing.T) {
 		
 		err := chatHandler.Handle(ctx, request, writer)
 		if err != nil {
-			t.Fatalf("Failed to send message to room %s: %v", room, err)
+			t.Fatalf("Failed to send message from %s: %v", msg.user, err)
 		}
 		
 		responseMap := writer.GetLastResponseAsMap()
@@ -160,47 +162,49 @@ func TestChatHandler_MultipleRoomsIntegration(t *testing.T) {
 		}
 	}
 
-	// 验证每个房间的消息
-	for _, room := range rooms {
-		request := handler.NewMockReaderFromRequests([]*transport.Request{
-			helpers.CreateTestRequest("GET", room, nil),
-		})
-		writer := handler.NewMockWriter()
-		
-		err := chatHandler.Handle(ctx, request, writer)
-		if err != nil {
-			t.Fatalf("Failed to get messages from room %s: %v", room, err)
+	// 验证所有消息都在同一个空间中
+	request := handler.NewMockReaderFromRequests([]*transport.Request{
+		helpers.CreateTestRequest("GET", "chat", nil),
+	})
+	writer := handler.NewMockWriter()
+	
+	err := chatHandler.Handle(ctx, request, writer)
+	if err != nil {
+		t.Fatalf("Failed to get all messages: %v", err)
+	}
+	
+	responseMap := writer.GetLastResponseAsMap()
+	if responseMap == nil {
+		t.Fatalf("Expected response but got nil")
+	}
+	if status, ok := responseMap["status"].(float64); ok {
+		if int(status) != 200 {
+			t.Errorf("Expected status 200, got %d", int(status))
 		}
-		
-		responseMap := writer.GetLastResponseAsMap()
-		if responseMap == nil {
-			t.Fatalf("Expected response but got nil")
+	}
+	
+	var allMessages []handler.ChatMessage
+	if data, ok := responseMap["data"]; ok {
+		if dataBytes, err := json.Marshal(data); err == nil {
+			json.Unmarshal(dataBytes, &allMessages)
 		}
-		if status, ok := responseMap["status"].(float64); ok {
-			if int(status) != 200 {
-				t.Errorf("Expected status 200, got %d", int(status))
+	}
+	
+	if len(allMessages) != len(messages) {
+		t.Errorf("Expected %d messages total, got %d", len(messages), len(allMessages))
+	}
+	
+	// 验证所有消息都存在
+	for i, expectedMsg := range messages {
+		found := false
+		for _, actualMsg := range allMessages {
+			if actualMsg.User == expectedMsg.user && actualMsg.Message == expectedMsg.message {
+				found = true
+				break
 			}
 		}
-		
-		var messages []handler.ChatMessage
-		if data, ok := responseMap["data"]; ok {
-			if dataBytes, err := json.Marshal(data); err == nil {
-				json.Unmarshal(dataBytes, &messages)
-			}
-		}
-		
-		if len(messages) != 1 {
-			t.Errorf("Room %s: expected 1 message, got %d", room, len(messages))
-		}
-		
-		if len(messages) > 0 {
-			message := messages[0]
-			if message.Room != room {
-				t.Errorf("Room %s: expected message to be in room '%s', got '%s'", room, room, message.Room)
-			}
-			if message.User != "user_"+room {
-				t.Errorf("Room %s: expected user 'user_%s', got '%s'", room, room, message.User)
-			}
+		if !found {
+			t.Errorf("Message %d: expected message from %s with content '%s' not found", i, expectedMsg.user, expectedMsg.message)
 		}
 	}
 }
@@ -208,9 +212,7 @@ func TestChatHandler_MultipleRoomsIntegration(t *testing.T) {
 func TestChatHandler_ConcurrentAccess(t *testing.T) {
 	// 创建聊天处理器
 	chatHandler := handler.NewChatHandler()
-	chatHandler.Start()
-	defer chatHandler.Stop()
-
+	
 	helpers := handler.NewTestHelpers()
 	ctx := helpers.CreateTestContext()
 
@@ -297,9 +299,7 @@ func TestChatHandler_ConcurrentAccess(t *testing.T) {
 func TestChatHandler_RoomOperations(t *testing.T) {
 	// 创建聊天处理器
 	chatHandler := handler.NewChatHandler()
-	chatHandler.Start()
-	defer chatHandler.Stop()
-
+	
 	helpers := handler.NewTestHelpers()
 	ctx := helpers.CreateTestContext()
 

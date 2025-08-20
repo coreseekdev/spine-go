@@ -103,8 +103,9 @@ func (w *WebSocketTransport) handleWebSocket(c *gin.Context) {
 	var ctx *Context
 	if w.serverCtx != nil {
 		ctx = &Context{
-			ServerInfo: w.serverCtx.ServerInfo,
-			ConnInfo:   connInfo,
+			ServerInfo:        w.serverCtx.ServerInfo,
+			ConnInfo:          connInfo,
+			ConnectionManager: w.serverCtx.Connections,
 		}
 	}
 

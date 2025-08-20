@@ -126,8 +126,9 @@ func (sc *ServerContext) GetStats() map[string]interface{} {
 
 // Context 包含服务器和连接信息
 type Context struct {
-	ServerInfo *ServerInfo
-	ConnInfo   *ConnInfo
+	ServerInfo        *ServerInfo
+	ConnInfo          *ConnInfo
+	ConnectionManager ConnectionManager
 }
 
 // ServerInfo 服务器信息

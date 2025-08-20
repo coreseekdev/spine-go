@@ -38,8 +38,6 @@ func main() {
 		
 	default:
 		chatHandler := handler.NewChatHandler()
-		chatHandler.Start()
-		defer chatHandler.Stop()
 		
 		// 设置 WebSocket transport 到聊天处理器
 		chatHandler.SetWebSocketTransport(wsTransport)

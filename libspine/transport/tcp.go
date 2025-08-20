@@ -116,8 +116,9 @@ func (t *TCPTransport) handleConnection(conn net.Conn) {
 
 	// 创建上下文
 	ctx := &Context{
-		ServerInfo: t.serverCtx.ServerInfo,
-		ConnInfo:   connInfo,
+		ServerInfo:        t.serverCtx.ServerInfo,
+		ConnInfo:          connInfo,
+		ConnectionManager: t.serverCtx.Connections,
 	}
 
 	// 连接关闭时从管理器移除

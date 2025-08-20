@@ -190,6 +190,7 @@ func (h *TestHelpers) CreateTestContext() *transport.Context {
 			Protocol: "test",
 			Metadata: make(map[string]interface{}),
 		},
+		ConnectionManager: transport.NewConnectionManager(),
 	}
 }
 
@@ -269,24 +270,19 @@ func (h *TestHelpers) Wait(duration time.Duration) {
 }
 
 // CreateChatMessage 创建聊天消息
-func (h *TestHelpers) CreateChatMessage(user, message, room string) map[string]interface{} {
+func (h *TestHelpers) CreateChatMessage(user, message string) map[string]interface{} {
 	return map[string]interface{}{
 		"user":    user,
 		"message": message,
-		"room":    room,
 	}
 }
 
-// CreateJoinRequest 创建加入房间请求
-func (h *TestHelpers) CreateJoinRequest(room string) map[string]interface{} {
-	return map[string]interface{}{
-		"room": room,
-	}
+// CreateJoinRequest 创建加入聊天请求
+func (h *TestHelpers) CreateJoinRequest() map[string]interface{} {
+	return map[string]interface{}{}
 }
 
-// CreateLeaveRequest 创建离开房间请求
-func (h *TestHelpers) CreateLeaveRequest(room string) map[string]interface{} {
-	return map[string]interface{}{
-		"room": room,
-	}
+// CreateLeaveRequest 创建离开聊天请求
+func (h *TestHelpers) CreateLeaveRequest() map[string]interface{} {
+	return map[string]interface{}{}
 }

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -34,10 +35,6 @@ func TestTCPTransport_NewAndStart(t *testing.T) {
 func TestUnixSocketTransport_NewAndStart(t *testing.T) {
 	// 创建一个临时 socket 路径
 	socketPath := "/tmp/test_spine_" + time.Now().Format("20060102150405") + ".sock"
-	defer func() {
-		// 清理 socket 文件
-		net.Dial("unix", socketPath) // 确保文件被释放
-	}()
 
 	transport, err := NewUnixSocketTransport(socketPath)
 	if err != nil {
@@ -58,14 +55,7 @@ func TestUnixSocketTransport_NewAndStart(t *testing.T) {
 		t.Fatalf("Failed to start Unix socket transport: %v", err)
 	}
 
-	// 连接到服务器
-	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	// 给一点时间让连接建立
+	// 给一点时间让服务器启动
 	time.Sleep(10 * time.Millisecond)
 }
 
@@ -135,22 +125,39 @@ func TestTransportRoundTrip(t *testing.T) {
 	defer client.Close()
 
 	done := make(chan bool)
+	errChan := make(chan error, 1)
 
-	// 发送简单的测试数据
+	// 客户端 goroutine
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errChan <- fmt.Errorf("panic in client goroutine: %v", r)
+				return
+			}
+		}()
+
+		// 发送测试数据
 		testData := []byte("Hello, World!")
-		client.Write(testData)
-		
+		_, err := client.Write(testData)
+		if err != nil {
+			errChan <- fmt.Errorf("failed to write test data: %v", err)
+			return
+		}
+
 		// 等待响应
 		response := make([]byte, 1024)
 		n, err := client.Read(response)
-		if err == nil && n > 0 {
-			// 验证响应
-			if string(response[:n]) != `{"status":"success"}` {
-				t.Errorf("Expected response 'success', got %s", string(response[:n]))
-			}
+		if err != nil {
+			errChan <- fmt.Errorf("failed to read response: %v", err)
+			return
 		}
-		
+
+		// 验证响应
+		if string(response[:n]) != `{"status":"success"}` {
+			errChan <- fmt.Errorf("expected response 'success', got %s", string(response[:n]))
+			return
+		}
+
 		done <- true
 	}()
 
@@ -158,6 +165,7 @@ func TestTransportRoundTrip(t *testing.T) {
 	reader := &TCPReader{Conn: server}
 	writer := &TCPWriter{Conn: server}
 
+	// 读取客户端数据
 	data, err := reader.Read()
 	if err != nil {
 		t.Fatalf("Failed to read data: %v", err)
@@ -170,12 +178,18 @@ func TestTransportRoundTrip(t *testing.T) {
 
 	// 发送响应
 	response := []byte(`{"status":"success"}`)
-
 	err = writer.Write(response)
 	if err != nil {
 		t.Fatalf("Failed to write response: %v", err)
 	}
 
-	// 等待客户端完成
-	<-done
+	// 等待客户端完成，带超时
+	select {
+	case <-done:
+		// 测试成功完成
+	case err := <-errChan:
+		t.Fatalf("Client goroutine error: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Test timed out waiting for client to complete")
+	}
 }

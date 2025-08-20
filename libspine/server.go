@@ -181,7 +181,6 @@ func (s *Server) registerHandlers() {
 		if s.config.StaticPath != "" {
 			chatHandler.SetStaticPath(s.config.StaticPath)
 		}
-		chatHandler.Start()
 		mainHandler = chatHandler
 		log.Printf("Server mode: Chat")
 		if s.config.StaticPath != "" {
@@ -199,7 +198,6 @@ func (s *Server) registerHandlers() {
 		if s.config.StaticPath != "" {
 			chatHandler.SetStaticPath(s.config.StaticPath)
 		}
-		chatHandler.Start()
 		mainHandler = chatHandler
 		log.Printf("Server mode: Chat (default)")
 		if s.config.StaticPath != "" {
