@@ -1,0 +1,205 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.lib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace files
+go.work
+
+# Build artifacts
+spine
+spine-cli
+spine-ws
+
+# OS-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Unix socket files
+*.sock
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Configuration files that might contain secrets
+config.json
+secrets.json
+
+# Cache directories
+.cache/
+*.cache
+
+# Test coverage
+coverage.txt
+coverage.html
+
+# Benchmark results
+*.bench
+
+# Profiling files
+*.prof
+*.pprof
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go modules
+go.sum
+
+# Binary output directories
+bin/
+dist/
+
+# Development databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Web build artifacts
+static/dist/
+build/
+
+# WebSocket static files (if generated)
+static/js/
+static/css/
+
+# Temporary upload directories
+uploads/
+tmp/
+
+# System-specific files
+# Linux
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE specific files
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Git
+.git
+.gitattributes
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Kubernetes
+*.yaml
+*.yml
+k8s/
+
+# Helm
+charts/
+
+# Terraform
+*.tf
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Ansible
+*.yml
+*.yaml
+ansible/
+inventory/
+
+# Documentation builds
+docs/_build/
+site/
+
+# PDFs
+*.pdf
+
+# Compressed files
+*.zip
+*.tar.gz
+*.rar
+
+# Backup files
+*.bak
+*.backup
