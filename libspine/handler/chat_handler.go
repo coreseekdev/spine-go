@@ -75,6 +75,16 @@ func (h *ChatHandler) Stop() {
 
 // Handle 处理聊天请求
 func (h *ChatHandler) Handle(ctx *transport.Context, req transport.Reader, res transport.Writer) error {
+	// 使用 ConnInfo 中的 Reader 和 Writer
+	if ctx.ConnInfo != nil {
+		if ctx.ConnInfo.Reader != nil {
+			req = ctx.ConnInfo.Reader
+		}
+		if ctx.ConnInfo.Writer != nil {
+			res = ctx.ConnInfo.Writer
+		}
+	}
+
 	// 读取原始数据
 	data, err := req.Read()
 	if err != nil {
@@ -168,8 +178,14 @@ func (h *ChatHandler) handleJoinRoom(ctx *transport.Context, req transport.Reade
 		return h.writeError(res, "Room not specified", 400)
 	}
 
+	// 使用 ConnInfo 中的 Writer
+	writer := res
+	if ctx.ConnInfo != nil && ctx.ConnInfo.Writer != nil {
+		writer = ctx.ConnInfo.Writer
+	}
+
 	h.clientsMu.Lock()
-	h.clients[room] = append(h.clients[room], res)
+	h.clients[room] = append(h.clients[room], writer)
 	h.clientsMu.Unlock()
 
 	return h.writeSuccess(res, map[string]interface{}{
@@ -189,12 +205,18 @@ func (h *ChatHandler) handleLeaveRoom(ctx *transport.Context, req transport.Read
 		return h.writeError(res, "Room not specified", 400)
 	}
 
+	// 使用 ConnInfo 中的 Writer
+	writer := res
+	if ctx.ConnInfo != nil && ctx.ConnInfo.Writer != nil {
+		writer = ctx.ConnInfo.Writer
+	}
+
 	h.clientsMu.Lock()
 	defer h.clientsMu.Unlock()
 
 	if clients, exists := h.clients[room]; exists {
 		for i, client := range clients {
-			if client == res {
+			if client == writer {
 				h.clients[room] = append(clients[:i], clients[i+1:]...)
 				break
 			}

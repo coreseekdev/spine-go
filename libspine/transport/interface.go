@@ -142,6 +142,8 @@ type ConnInfo struct {
 	Remote   net.Addr
 	Protocol string
 	Metadata map[string]interface{}
+	Reader   Reader
+	Writer   Writer
 }
 
 // Request 请求结构
@@ -175,12 +177,10 @@ type Writer interface {
 
 // Transport 传输层接口
 type Transport interface {
-	// 接受连接
-	Accept() (net.Conn, error)
-	// 创建 Reader 和 Writer
-	NewHandlers(conn net.Conn) (Reader, Writer)
-	// 关闭传输层
-	Close() error
+	// 启动传输层
+	Start(serverCtx *ServerContext) error
+	// 停止传输层
+	Stop() error
 }
 
 // Handler 处理器接口

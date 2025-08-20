@@ -25,7 +25,7 @@ func main() {
 	serverCtx := transport.NewServerContext(serverInfo)
 
 	// 创建 WebSocket 传输层
-	wsTransport := transport.NewWebSocketTransportWithContext(":"+*port, serverCtx)
+	wsTransport := transport.NewWebSocketTransport(":"+*port)
 	
 	// 根据模式创建单一处理器
 	var mainHandler handler.Handler
@@ -53,7 +53,7 @@ func main() {
 	log.Printf("WebSocket server starting on port %s", *port)
 	log.Printf("Visit http://localhost%s for the web interface", *port)
 	
-	if err := wsTransport.Start(); err != nil {
+	if err := wsTransport.Start(serverCtx); err != nil {
 		log.Fatalf("Failed to start WebSocket server: %v", err)
 	}
 }

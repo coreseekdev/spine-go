@@ -6,28 +6,32 @@ import (
 	"time"
 )
 
-func TestTCPTransport_NewAndAccept(t *testing.T) {
+func TestTCPTransport_NewAndStart(t *testing.T) {
 	// 创建一个临时端口进行测试
 	transport, err := NewTCPTransport("localhost:0")
 	if err != nil {
 		t.Fatalf("Failed to create TCP transport: %v", err)
 	}
-	defer transport.Close()
+	defer transport.Stop()
 
-	// 在 goroutine 中接受连接
-	go func() {
-		conn, err := transport.Accept()
-		if err != nil {
-			return
-		}
-		conn.Close()
-	}()
+	// 创建服务器上下文
+	serverInfo := &ServerInfo{
+		Address: "localhost:0",
+		Config:  make(map[string]interface{}),
+	}
+	serverCtx := NewServerContext(serverInfo)
+
+	// 启动传输层
+	err = transport.Start(serverCtx)
+	if err != nil {
+		t.Fatalf("Failed to start TCP transport: %v", err)
+	}
 
 	// 给一点时间让服务器启动
 	time.Sleep(10 * time.Millisecond)
 }
 
-func TestUnixSocketTransport_NewAndAccept(t *testing.T) {
+func TestUnixSocketTransport_NewAndStart(t *testing.T) {
 	// 创建一个临时 socket 路径
 	socketPath := "/tmp/test_spine_" + time.Now().Format("20060102150405") + ".sock"
 	defer func() {
@@ -39,16 +43,20 @@ func TestUnixSocketTransport_NewAndAccept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create Unix socket transport: %v", err)
 	}
-	defer transport.Close()
+	defer transport.Stop()
 
-	// 在 goroutine 中接受连接
-	go func() {
-		conn, err := transport.Accept()
-		if err != nil {
-			return
-		}
-		conn.Close()
-	}()
+	// 创建服务器上下文
+	serverInfo := &ServerInfo{
+		Address: socketPath,
+		Config:  make(map[string]interface{}),
+	}
+	serverCtx := NewServerContext(serverInfo)
+
+	// 启动传输层
+	err = transport.Start(serverCtx)
+	if err != nil {
+		t.Fatalf("Failed to start Unix socket transport: %v", err)
+	}
 
 	// 连接到服务器
 	conn, err := net.Dial("unix", socketPath)
@@ -147,8 +155,8 @@ func TestTransportRoundTrip(t *testing.T) {
 	}()
 
 	// 服务器端处理
-	reader := &TCPReader{conn: server}
-	writer := &TCPWriter{conn: server}
+	reader := &TCPReader{Conn: server}
+	writer := &TCPWriter{Conn: server}
 
 	data, err := reader.Read()
 	if err != nil {

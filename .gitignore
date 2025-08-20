@@ -7,8 +7,11 @@
 *.lib
 
 spine/main
+spine/spine
 spine-cli/main
+spine-cli/spine-cli
 spine-ws/main
+spine-ws/spine-ws
 
 # Test binary, built with `go test -c`
 *.test

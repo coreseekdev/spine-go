@@ -10,7 +10,6 @@ import (
 
 // Client 客户端结构
 type Client struct {
-	transport transport.Transport
 	conn      net.Conn
 	reader    transport.Reader
 	writer    transport.Writer
@@ -18,14 +17,14 @@ type Client struct {
 
 // NewClient 创建新的客户端
 func NewClient(protocol, address string) (*Client, error) {
-	var t transport.Transport
+	var conn net.Conn
 	var err error
 
 	switch protocol {
 	case "tcp":
-		t, err = transport.NewTCPTransport(address)
+		conn, err = net.Dial("tcp", address)
 	case "unix":
-		t, err = transport.NewUnixSocketTransport(address)
+		conn, err = net.Dial("unix", address)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %s", protocol)
 	}
@@ -34,20 +33,29 @@ func NewClient(protocol, address string) (*Client, error) {
 		return nil, err
 	}
 
+	// 创建对应的 Reader 和 Writer
+	var reader transport.Reader
+	var writer transport.Writer
+
+	switch protocol {
+	case "tcp":
+		reader = &transport.TCPReader{Conn: conn}
+		writer = &transport.TCPWriter{Conn: conn}
+	case "unix":
+		reader = &transport.UnixSocketReader{Conn: conn}
+		writer = &transport.UnixSocketWriter{Conn: conn}
+	}
+
 	return &Client{
-		transport: t,
+		conn:   conn,
+		reader: reader,
+		writer: writer,
 	}, nil
 }
 
-// Connect 连接到服务器
+// Connect 连接到服务器（已弃用，连接在 NewClient 中建立）
 func (c *Client) Connect(address string) error {
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		return err
-	}
-
-	c.conn = conn
-	c.reader, c.writer = c.transport.NewHandlers(conn)
+	// 连接已在 NewClient 中建立，此方法保留向后兼容
 	return nil
 }
 

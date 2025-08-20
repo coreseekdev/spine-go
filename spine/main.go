@@ -3,30 +3,27 @@ package main
 import (
 	"flag"
 	"log"
-	"spine-go/libspine"
 	"os"
 	"os/signal"
-	"syscall"
+	"spine-go/libspine"
 	"strings"
+	"syscall"
 )
 
 func main() {
 	// 解析命令行参数
 	var (
-		listenArgs  []string
-		staticPath  = flag.String("static", "", "Static files path for chat webui")
-		redisAddr   = flag.String("redis-addr", "localhost:6379", "Redis server address")
-		redisPass   = flag.String("redis-pass", "", "Redis password")
-		redisDB     = flag.Int("redis-db", 0, "Redis database number")
-		serverMode  = flag.String("mode", "chat", "Server mode (chat/redis)")
+		listenArgs []string
+		staticPath = flag.String("static", "", "Static files path for chat webui")
+		serverMode = flag.String("mode", "chat", "Server mode (chat/redis)")
 	)
-	
+
 	// 自定义 flag 函数来收集多个 --listen 参数
 	flag.Func("listen", "Listen address (format: schema://host:port, e.g., tcp://:8080, ws://:8081, unix:///tmp/spine.sock). Can be specified multiple times.", func(value string) error {
 		listenArgs = append(listenArgs, value)
 		return nil
 	})
-	
+
 	flag.Parse()
 
 	// 解析监听地址
@@ -36,24 +33,24 @@ func main() {
 		if addr == "" {
 			continue
 		}
-		
+
 		// 解析 schema://host:port 格式
 		parts := strings.SplitN(addr, "://", 2)
 		if len(parts) != 2 {
 			log.Printf("Invalid listen address format: %s (expected schema://host:port)", addr)
 			continue
 		}
-		
+
 		schema := parts[0]
 		hostPort := parts[1]
-		
+
 		// 对于 unix schema，hostPort 就是路径
 		if schema == "unix" {
 			listenConfigs = append(listenConfigs, libspine.ListenConfig{
 				Schema: schema,
 				Host:   "",
-				Port:   hostPort,
-				URL:    "",
+				Port:   "",
+				Path:   hostPort,
 			})
 		} else {
 			// 对于 tcp 和 ws，分割 host 和 port
@@ -69,21 +66,21 @@ func main() {
 					port = hostPort[lastColon+1:]
 				}
 			}
-			
+
 			listenConfigs = append(listenConfigs, libspine.ListenConfig{
 				Schema: schema,
 				Host:   host,
 				Port:   port,
-				URL:    "",
+				Path:   "",
 			})
 		}
 	}
-	
+
 	// 如果没有指定监听地址，使用默认配置
 	if len(listenConfigs) == 0 {
 		listenConfigs = []libspine.ListenConfig{
-			{Schema: "tcp", Host: "", Port: "8080", URL: ""},
-			{Schema: "ws", Host: "", Port: "8081", URL: ""},
+			{Schema: "tcp", Host: "", Port: "8080", Path: ""},
+			{Schema: "ws", Host: "", Port: "8081", Path: ""},
 		}
 	}
 
@@ -92,13 +89,16 @@ func main() {
 		ListenConfigs: listenConfigs,
 		ServerMode:    *serverMode,
 		StaticPath:    *staticPath,
-		RedisAddr:     *redisAddr,
-		RedisPass:     *redisPass,
-		RedisDB:       *redisDB,
 	}
 
 	// 创建服务器
 	server := libspine.NewServer(config)
+
+	// 如果有静态文件路径，设置到服务器上下文中
+	if *staticPath != "" {
+		serverCtx := server.GetServerContext()
+		serverCtx.ServerInfo.Config["static_path"] = *staticPath
+	}
 
 	// 启动服务器
 	go func() {
