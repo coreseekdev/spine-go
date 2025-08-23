@@ -1,0 +1,387 @@
+package e2e
+
+import (
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+)
+
+// E2ETestSuite E2E 测试套件
+type E2ETestSuite struct {
+	serverManager     *TestServerManager
+	clientFactory     *TestClientFactory
+	messageValidator  *MessageValidator
+	responseValidator *ResponseValidator
+	connectionValidator *ConnectionValidator
+	clients           map[string]TestClient
+	mu                sync.RWMutex
+}
+
+// NewE2ETestSuite 创建新的 E2E 测试套件
+func NewE2ETestSuite() *E2ETestSuite {
+	return &E2ETestSuite{
+		serverManager:       NewTestServerManager(),
+		clientFactory:       NewTestClientFactory(),
+		messageValidator:    NewMessageValidator(),
+		responseValidator:   NewResponseValidator(),
+		connectionValidator: NewConnectionValidator(),
+		clients:             make(map[string]TestClient),
+	}
+}
+
+// SetupTest 设置测试环境
+func (suite *E2ETestSuite) SetupTest(protocols []string) error {
+	// 启动测试服务器
+	if err := suite.serverManager.StartServer(protocols); err != nil {
+		return fmt.Errorf("failed to start test server: %v", err)
+	}
+
+	// 等待服务器完全启动
+	time.Sleep(100 * time.Millisecond)
+	return nil
+}
+
+// TeardownTest 清理测试环境
+func (suite *E2ETestSuite) TeardownTest() error {
+	// 断开所有客户端连接
+	suite.mu.Lock()
+	for name, client := range suite.clients {
+		if client.IsConnected() {
+			client.Disconnect()
+		}
+		delete(suite.clients, name)
+	}
+	suite.mu.Unlock()
+
+	// 停止测试服务器
+	if err := suite.serverManager.StopServer(); err != nil {
+		return fmt.Errorf("failed to stop test server: %v", err)
+	}
+
+	// 清空验证器
+	suite.messageValidator.Clear()
+	return nil
+}
+
+// CreateClient 创建并连接客户端
+func (suite *E2ETestSuite) CreateClient(name, protocol string) error {
+	address, err := suite.serverManager.GetServerAddress(protocol)
+	if err != nil {
+		return fmt.Errorf("failed to get server address for %s: %v", protocol, err)
+	}
+
+	client, err := suite.clientFactory.CreateClient(protocol, address)
+	if err != nil {
+		return fmt.Errorf("failed to create client: %v", err)
+	}
+
+	if err := client.Connect(); err != nil {
+		return fmt.Errorf("failed to connect client: %v", err)
+	}
+
+	suite.mu.Lock()
+	suite.clients[name] = client
+	suite.mu.Unlock()
+
+	return nil
+}
+
+// GetClient 获取客户端
+func (suite *E2ETestSuite) GetClient(name string) (TestClient, error) {
+	suite.mu.RLock()
+	defer suite.mu.RUnlock()
+
+	client, exists := suite.clients[name]
+	if !exists {
+		return nil, fmt.Errorf("client %s not found", name)
+	}
+	return client, nil
+}
+
+// RunBasicChatTest 运行基本聊天测试
+func (suite *E2ETestSuite) RunBasicChatTest(t *testing.T, protocol string) {
+	// 设置测试环境
+	if err := suite.SetupTest([]string{protocol}); err != nil {
+		t.Fatalf("Failed to setup test: %v", err)
+	}
+	defer suite.TeardownTest()
+
+	// 创建客户端
+	if err := suite.CreateClient("client1", protocol); err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	client1, _ := suite.GetClient("client1")
+
+	// 加入聊天
+	if err := client1.JoinChat(); err != nil {
+		t.Fatalf("Failed to join chat: %v", err)
+	}
+
+	// 发送消息
+	if err := client1.SendMessage("testuser", "hello world"); err != nil {
+		t.Fatalf("Failed to send message: %v", err)
+	}
+
+	// 验证连接状态
+	if err := suite.connectionValidator.ValidateConnection(client1, true); err != nil {
+		t.Fatalf("Connection validation failed: %v", err)
+	}
+
+	t.Logf("Basic chat test passed for protocol: %s", protocol)
+}
+
+// RunMultiClientBroadcastTest 运行多客户端广播测试
+func (suite *E2ETestSuite) RunMultiClientBroadcastTest(t *testing.T, protocol string) {
+	// 设置测试环境
+	if err := suite.SetupTest([]string{protocol}); err != nil {
+		t.Fatalf("Failed to setup test: %v", err)
+	}
+	defer suite.TeardownTest()
+
+	// 创建多个客户端
+	clientNames := []string{"client1", "client2", "client3"}
+	for _, name := range clientNames {
+		if err := suite.CreateClient(name, protocol); err != nil {
+			t.Fatalf("Failed to create client %s: %v", name, err)
+		}
+	}
+
+	// 所有客户端加入聊天
+	for _, name := range clientNames {
+		client, _ := suite.GetClient(name)
+		if err := client.JoinChat(); err != nil {
+			t.Fatalf("Failed to join chat for %s: %v", name, err)
+		}
+	}
+
+	// 等待连接稳定
+	time.Sleep(100 * time.Millisecond)
+
+	// 验证服务器连接数
+	if err := suite.connectionValidator.ValidateServerConnections(suite.serverManager, len(clientNames)); err != nil {
+		t.Fatalf("Server connection validation failed: %v", err)
+	}
+
+	// 启动消息接收 goroutines，在发送消息之前开始监听
+	var wg sync.WaitGroup
+	messageReceived := make(chan string, len(clientNames))
+
+	for _, name := range clientNames {
+		wg.Add(1)
+		go func(clientName string) {
+			defer wg.Done()
+			client, _ := suite.GetClient(clientName)
+			
+			// 持续监听消息
+			for {
+				response, err := client.ReceiveMessage()
+				if err != nil {
+					t.Logf("Client %s receive error: %v", clientName, err)
+					return
+				}
+				
+				if msg, err := suite.responseValidator.ValidateMessageResponse(response); err == nil {
+					// 只记录广播消息，忽略其他响应（如JOIN的响应）
+					if msg.User == "user1" && msg.Message == "broadcast test message" {
+						suite.messageValidator.RecordMessage(msg.User, msg.Message, clientName, msg.Timestamp)
+						messageReceived <- clientName
+						return
+					}
+				}
+			}
+		}(name)
+	}
+
+	// 等待接收器启动
+	time.Sleep(200 * time.Millisecond)
+
+	// client1 发送消息
+	client1, _ := suite.GetClient("client1")
+	if err := client1.SendMessage("user1", "broadcast test message"); err != nil {
+		t.Fatalf("Failed to send message: %v", err)
+	}
+
+	// 等待所有消息接收完成或超时
+	go func() {
+		wg.Wait()
+		close(messageReceived)
+	}()
+
+	receivedClients := make(map[string]bool)
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case clientName := <-messageReceived:
+			if clientName != "" {
+				receivedClients[clientName] = true
+				if len(receivedClients) >= len(clientNames) {
+					goto validateMessages
+				}
+			}
+		case <-timeout:
+			t.Fatalf("Timeout: only received messages from %d/%d clients: %v", len(receivedClients), len(clientNames), receivedClients)
+		}
+	}
+
+validateMessages:
+	// 验证广播
+	if err := suite.messageValidator.ValidateBroadcast(clientNames); err != nil {
+		t.Fatalf("Broadcast validation failed: %v", err)
+	}
+
+	t.Logf("Multi-client broadcast test passed for protocol: %s", protocol)
+}
+
+// RunCrossProtocolTest 运行跨协议测试
+func (suite *E2ETestSuite) RunCrossProtocolTest(t *testing.T) {
+	protocols := []string{"tcp", "http"}
+	
+	// 设置测试环境
+	if err := suite.SetupTest(protocols); err != nil {
+		t.Fatalf("Failed to setup test: %v", err)
+	}
+	defer suite.TeardownTest()
+
+	// 创建不同协议的客户端
+	if err := suite.CreateClient("tcp_client", "tcp"); err != nil {
+		t.Fatalf("Failed to create TCP client: %v", err)
+	}
+	
+	if err := suite.CreateClient("ws_client", "http"); err != nil {
+		t.Fatalf("Failed to create WebSocket client: %v", err)
+	}
+
+	// 所有客户端加入聊天
+	tcpClient, _ := suite.GetClient("tcp_client")
+	wsClient, _ := suite.GetClient("ws_client")
+
+	if err := tcpClient.JoinChat(); err != nil {
+		t.Fatalf("Failed to join chat for TCP client: %v", err)
+	}
+	
+	if err := wsClient.JoinChat(); err != nil {
+		t.Fatalf("Failed to join chat for WebSocket client: %v", err)
+	}
+
+	// 等待连接稳定
+	time.Sleep(100 * time.Millisecond)
+
+	// TCP 客户端发送消息
+	if err := tcpClient.SendMessage("tcp_user", "cross protocol message"); err != nil {
+		t.Fatalf("Failed to send message from TCP client: %v", err)
+	}
+
+	// WebSocket 客户端接收消息，可能需要跳过JOIN响应
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case <-timeout:
+			t.Fatalf("Timeout waiting for cross-protocol message")
+		default:
+			if response, err := wsClient.ReceiveMessage(); err == nil {
+				if msg, err := suite.responseValidator.ValidateMessageResponse(response); err == nil {
+					// 跳过JOIN响应，只处理广播消息
+					if msg.User == "tcp_user" && msg.Message == "cross protocol message" {
+						t.Logf("Cross-protocol message received successfully: %+v", msg)
+						goto testPassed
+					}
+					// 继续等待下一个消息
+					continue
+				}
+			} else {
+				t.Fatalf("Failed to receive cross-protocol message: %v", err)
+			}
+		}
+	}
+
+testPassed:
+
+	t.Logf("Cross-protocol test passed")
+}
+
+// 具体的测试函数
+
+// TestTCPBasicChat 测试 TCP 基本聊天功能
+func TestTCPBasicChat(t *testing.T) {
+	suite := NewE2ETestSuite()
+	suite.RunBasicChatTest(t, "tcp")
+}
+
+// TestWebSocketBasicChat 测试 WebSocket 基本聊天功能
+func TestWebSocketBasicChat(t *testing.T) {
+	suite := NewE2ETestSuite()
+	suite.RunBasicChatTest(t, "http")
+}
+
+// TestTCPMultiClientBroadcast 测试 TCP 多客户端广播
+func TestTCPMultiClientBroadcast(t *testing.T) {
+	suite := NewE2ETestSuite()
+	suite.RunMultiClientBroadcastTest(t, "tcp")
+}
+
+// TestWebSocketMultiClientBroadcast 测试 WebSocket 多客户端广播
+func TestWebSocketMultiClientBroadcast(t *testing.T) {
+	suite := NewE2ETestSuite()
+	suite.RunMultiClientBroadcastTest(t, "http")
+}
+
+// TestCrossProtocolCommunication 测试跨协议通信
+func TestCrossProtocolCommunication(t *testing.T) {
+	suite := NewE2ETestSuite()
+	suite.RunCrossProtocolTest(t)
+}
+
+// TestConnectionManagement 测试连接管理
+func TestConnectionManagement(t *testing.T) {
+	suite := NewE2ETestSuite()
+	
+	// 设置测试环境
+	if err := suite.SetupTest([]string{"tcp"}); err != nil {
+		t.Fatalf("Failed to setup test: %v", err)
+	}
+	defer suite.TeardownTest()
+
+	// 创建客户端并连接
+	if err := suite.CreateClient("client1", "tcp"); err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	client1, _ := suite.GetClient("client1")
+
+	// 验证连接状态
+	if err := suite.connectionValidator.ValidateConnection(client1, true); err != nil {
+		t.Fatalf("Connection validation failed: %v", err)
+	}
+
+	// 加入聊天
+	if err := client1.JoinChat(); err != nil {
+		t.Fatalf("Failed to join chat: %v", err)
+	}
+
+	// 验证服务器连接数
+	if err := suite.connectionValidator.ValidateServerConnections(suite.serverManager, 1); err != nil {
+		t.Fatalf("Server connection validation failed: %v", err)
+	}
+
+	// 断开连接
+	if err := client1.Disconnect(); err != nil {
+		t.Fatalf("Failed to disconnect client: %v", err)
+	}
+
+	// 验证连接状态
+	if err := suite.connectionValidator.ValidateConnection(client1, false); err != nil {
+		t.Fatalf("Disconnection validation failed: %v", err)
+	}
+
+	// 等待服务器清理连接
+	time.Sleep(100 * time.Millisecond)
+
+	// 验证服务器连接数
+	if err := suite.connectionValidator.ValidateServerConnections(suite.serverManager, 0); err != nil {
+		t.Fatalf("Server connection cleanup validation failed: %v", err)
+	}
+
+	t.Logf("Connection management test passed")
+}
