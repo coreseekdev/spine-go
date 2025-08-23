@@ -336,15 +336,31 @@ func TestCrossProtocolCommunication(t *testing.T) {
 // TestConnectionManagement 测试连接管理
 func TestConnectionManagement(t *testing.T) {
 	suite := NewE2ETestSuite()
-	
+	suite.RunConnectionManagementTest(t, "tcp")
+}
+
+// TestServerGracefulShutdown 测试服务器优雅关闭
+func TestServerGracefulShutdown(t *testing.T) {
+	suite := NewE2ETestSuite()
+	suite.RunGracefulShutdownTest(t, "tcp")
+}
+
+// TestWebSocketServerGracefulShutdown 测试WebSocket服务器优雅关闭
+func TestWebSocketServerGracefulShutdown(t *testing.T) {
+	suite := NewE2ETestSuite()
+	suite.RunGracefulShutdownTest(t, "http")
+}
+
+// RunConnectionManagementTest 运行连接管理测试
+func (suite *E2ETestSuite) RunConnectionManagementTest(t *testing.T, protocol string) {
 	// 设置测试环境
-	if err := suite.SetupTest([]string{"tcp"}); err != nil {
+	if err := suite.SetupTest([]string{protocol}); err != nil {
 		t.Fatalf("Failed to setup test: %v", err)
 	}
 	defer suite.TeardownTest()
 
 	// 创建客户端并连接
-	if err := suite.CreateClient("client1", "tcp"); err != nil {
+	if err := suite.CreateClient("client1", protocol); err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 
@@ -384,4 +400,66 @@ func TestConnectionManagement(t *testing.T) {
 	}
 
 	t.Logf("Connection management test passed")
+}
+
+// RunGracefulShutdownTest 运行优雅关闭测试
+func (suite *E2ETestSuite) RunGracefulShutdownTest(t *testing.T, protocol string) {
+	// 设置测试环境
+	if err := suite.SetupTest([]string{protocol}); err != nil {
+		t.Fatalf("Failed to setup test: %v", err)
+	}
+
+	// 创建多个客户端并连接
+	clientNames := []string{"client1", "client2", "client3"}
+	for _, name := range clientNames {
+		if err := suite.CreateClient(name, protocol); err != nil {
+			t.Fatalf("Failed to create client %s: %v", name, err)
+		}
+		
+		client, _ := suite.GetClient(name)
+		if err := client.JoinChat(); err != nil {
+			t.Fatalf("Failed to join chat for %s: %v", name, err)
+		}
+	}
+
+	// 验证所有客户端都已连接
+	for _, name := range clientNames {
+		client, _ := suite.GetClient(name)
+		if err := suite.connectionValidator.ValidateConnection(client, true); err != nil {
+			t.Fatalf("Connection validation failed for %s: %v", name, err)
+		}
+	}
+
+	t.Logf("All clients connected successfully")
+
+	// 记录关闭开始时间
+	shutdownStart := time.Now()
+
+	// 关闭服务器（不调用TeardownTest，因为我们要测试关闭行为）
+	if err := suite.serverManager.Stop(); err != nil {
+		t.Fatalf("Failed to stop server: %v", err)
+	}
+
+	shutdownDuration := time.Since(shutdownStart)
+	t.Logf("Server shutdown took: %v", shutdownDuration)
+
+	// 验证服务器在合理时间内关闭（应该主动关闭客户端连接，而不是等待）
+	maxShutdownTime := 2 * time.Second
+	if shutdownDuration > maxShutdownTime {
+		t.Fatalf("Server took too long to shutdown: %v (expected < %v)", shutdownDuration, maxShutdownTime)
+	}
+
+	// 验证服务器能够快速关闭，说明主动关闭了所有连接
+	t.Logf("Graceful shutdown test passed - server closed in %v", shutdownDuration)
+	
+	// 验证客户端在尝试发送消息时会检测到连接已断开
+	time.Sleep(50 * time.Millisecond)
+	for i, name := range clientNames {
+		client, _ := suite.GetClient(name)
+		err := client.SendMessage(fmt.Sprintf("user%d", i+1), "test after shutdown")
+		if err == nil {
+			t.Fatalf("Client %s should fail to send message after server shutdown", name)
+		}
+		t.Logf("Client %s correctly detected disconnection: %v", name, err)
+	}
 }

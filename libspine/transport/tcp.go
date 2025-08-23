@@ -65,6 +65,11 @@ func (t *TCPTransport) Stop() error {
 		t.listener.Close()
 	}
 
+	// 主动关闭所有活跃连接，而不是等待它们自然结束
+	if t.serverCtx != nil && t.serverCtx.Connections != nil {
+		t.serverCtx.Connections.CloseAllConnections()
+	}
+
 	t.wg.Wait()
 	log.Printf("TCP transport stopped")
 	return nil
@@ -98,7 +103,7 @@ func (t *TCPTransport) handleConnection(conn net.Conn) {
 	defer t.wg.Done()
 	defer conn.Close()
 
-	reader := &TCPReader{Conn: conn}
+	reader := &TCPReader{Conn: conn, quitChan: t.quitChan}
 	writer := &TCPWriter{Conn: conn}
 
 	// 创建连接信息
@@ -124,6 +129,14 @@ func (t *TCPTransport) handleConnection(conn net.Conn) {
 	// 连接关闭时从管理器移除
 	defer t.serverCtx.Connections.RemoveConnection(connInfo.ID)
 
+	// 监听quit信号，如果收到则立即关闭连接
+	go func() {
+		select {
+		case <-t.quitChan:
+			conn.Close()
+		}
+	}()
+
 	// 获取处理器
 	handler := t.serverCtx.GetHandler()
 	if handler != nil {
@@ -132,7 +145,8 @@ func (t *TCPTransport) handleConnection(conn net.Conn) {
 		if err != nil {
 			// 只记录非网络错误，避免大量 broken pipe 日志
 			if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
-				if err.Error() != "EOF" && err.Error() != "write: broken pipe" {
+				if err.Error() != "EOF" && err.Error() != "write: broken pipe" && 
+				   err.Error() != "use of closed network connection" {
 					log.Printf("TCP handler error: %v", err)
 				}
 			}
@@ -142,7 +156,8 @@ func (t *TCPTransport) handleConnection(conn net.Conn) {
 
 // TCPReader TCP 读取器
 type TCPReader struct {
-	Conn net.Conn
+	Conn     net.Conn
+	quitChan <-chan struct{}
 }
 
 // Read 读取原始数据
@@ -170,8 +185,21 @@ type TCPWriter struct {
 
 // Write 写入原始数据
 func (w *TCPWriter) Write(data []byte) error {
+	// 确保数据以换行符结尾，这样客户端可以正确读取
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		data = append(data, '\n')
+	}
 	_, err := w.Conn.Write(data)
-	return err
+	if err != nil {
+		return err
+	}
+	
+	// 立即刷新数据，确保广播消息能及时发送
+	if tcpConn, ok := w.Conn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(true)
+	}
+	
+	return nil
 }
 
 // Close 关闭写入器

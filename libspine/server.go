@@ -143,6 +143,14 @@ func (s *Server) Stop() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// 首先主动关闭所有客户端连接
+	if s.serverCtx != nil && s.serverCtx.Connections != nil {
+		log.Printf("Closing all active connections before server shutdown")
+		if err := s.serverCtx.Connections.CloseAllConnections(); err != nil {
+			log.Printf("Error closing connections: %v", err)
+		}
+	}
+
 	var errs []error
 	for i, transport := range s.transports {
 		if err := transport.Stop(); err != nil {

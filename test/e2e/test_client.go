@@ -94,13 +94,39 @@ func (c *TCPTestClient) Disconnect() error {
 
 	if c.conn != nil {
 		c.conn.Close()
+		c.conn = nil
 	}
+
 	c.connected = false
 	return nil
 }
 
+// checkConnectionStatus 检查并更新连接状态
+func (c *TCPTestClient) checkConnectionStatus() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.connected || c.conn == nil {
+		return
+	}
+
+	// 尝试写入空数据检测连接状态
+	_, err := c.conn.Write([]byte{})
+	if err != nil {
+		c.connected = false
+		if c.conn != nil {
+			c.conn.Close()
+			c.conn = nil
+		}
+	}
+}
+
 // SendMessage 发送聊天消息
 func (c *TCPTestClient) SendMessage(user, message string) error {
+	// 检查连接状态
+	if !c.IsConnected() {
+		return fmt.Errorf("client is not connected")
+	}
 	return c.sendRequest("POST", "/chat", map[string]interface{}{
 		"user":    user,
 		"message": message,
@@ -131,43 +157,54 @@ func (c *TCPTestClient) ReceiveMessage() (*ChatResponse, error) {
 		return nil, fmt.Errorf("client is not connected")
 	}
 
-	// 设置读取超时
-	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	// 设置较长的读取超时用于广播消息
+	c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	defer c.conn.SetReadDeadline(time.Time{}) // 清除超时
 
-	// 直接从连接读取数据
-	buffer := make([]byte, 4096)
-	n, err := c.conn.Read(buffer)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read message: %v", err)
+	// 使用 bufio.Scanner 按行读取，处理多行JSON
+	scanner := bufio.NewScanner(c.conn)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("failed to read message: %v", err)
+		}
+		return nil, fmt.Errorf("connection closed")
 	}
 
-	data := string(buffer[:n])
-	
-	// 处理连续的JSON对象，使用简单的括号匹配来分割
-	var responses []ChatResponse
-	decoder := json.NewDecoder(strings.NewReader(data))
-	
-	for decoder.More() {
-		var response ChatResponse
-		if err := decoder.Decode(&response); err == nil {
-			responses = append(responses, response)
-		}
+	data := scanner.Text()
+	if data == "" {
+		return nil, fmt.Errorf("empty message received")
 	}
-	
-	if len(responses) == 0 {
-		return nil, fmt.Errorf("no valid response found in data: %s", data)
+
+	// 解析JSON响应
+	var response ChatResponse
+	if err := json.Unmarshal([]byte(data), &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %v", err)
 	}
-	
-	// 返回第一个有效的响应
-	return &responses[0], nil
+
+	return &response, nil
 }
 
-// IsConnected 检查是否已连接
+// IsConnected 检查连接状态
 func (c *TCPTestClient) IsConnected() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.connected
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.connected || c.conn == nil {
+		return false
+	}
+
+	// 尝试写入一个空数据来检测连接状态
+	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Millisecond))
+	_, err := c.conn.Write([]byte{})
+	c.conn.SetWriteDeadline(time.Time{}) // 清除deadline
+
+	if err != nil {
+		// 写入失败表示连接断开
+		c.connected = false
+		return false
+	}
+
+	return true
 }
 
 // sendRequest 发送请求
@@ -175,7 +212,7 @@ func (c *TCPTestClient) sendRequest(method, path string, data interface{}) error
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if !c.connected {
+	if !c.connected || c.conn == nil {
 		return fmt.Errorf("client is not connected")
 	}
 
@@ -190,15 +227,73 @@ func (c *TCPTestClient) sendRequest(method, path string, data interface{}) error
 		return fmt.Errorf("failed to marshal request: %v", err)
 	}
 
-	// 添加换行符作为消息分隔符
-	requestData = append(requestData, '\n')
-	
-	_, err = c.conn.Write(requestData)
+	// 发送请求
+	_, err = c.conn.Write(append(requestData, '\n'))
 	if err != nil {
+		// 更新连接状态
+		c.mu.RUnlock()
+		c.mu.Lock()
+		c.connected = false
+		c.mu.Unlock()
+		c.mu.RLock()
 		return fmt.Errorf("failed to send request: %v", err)
 	}
 
+	// 读取响应
+	response, err := c.receiveResponse()
+	if err != nil {
+		// 更新连接状态
+		c.mu.RUnlock()
+		c.mu.Lock()
+		c.connected = false
+		c.mu.Unlock()
+		c.mu.RLock()
+		return fmt.Errorf("failed to read response: %v", err)
+	}
+
+	if response.Status != 200 {
+		return fmt.Errorf("request failed: %s", response.Error)
+	}
+
 	return nil
+}
+
+// receiveResponse 接收响应
+func (c *TCPTestClient) receiveResponse() (*ChatResponse, error) {
+	if !c.connected || c.conn == nil {
+		return nil, fmt.Errorf("client is not connected")
+	}
+
+	// 设置读取超时
+	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	defer c.conn.SetReadDeadline(time.Time{}) // 清除超时
+
+	// 直接从连接读取数据
+	buffer := make([]byte, 4096)
+	n, err := c.conn.Read(buffer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read message: %v", err)
+	}
+
+	data := string(buffer[:n])
+
+	// 处理连续的JSON对象，使用简单的括号匹配来分割
+	var responses []ChatResponse
+	decoder := json.NewDecoder(strings.NewReader(data))
+
+	for decoder.More() {
+		var response ChatResponse
+		if err := decoder.Decode(&response); err == nil {
+			responses = append(responses, response)
+		}
+	}
+
+	if len(responses) == 0 {
+		return nil, fmt.Errorf("no valid response found in data: %s", data)
+	}
+
+	// 返回第一个有效的响应
+	return &responses[0], nil
 }
 
 // WebSocketTestClient WebSocket 测试客户端
@@ -258,6 +353,10 @@ func (c *WebSocketTestClient) Disconnect() error {
 
 // SendMessage 发送聊天消息
 func (c *WebSocketTestClient) SendMessage(user, message string) error {
+	// 检查连接状态
+	if !c.IsConnected() {
+		return fmt.Errorf("client is not connected")
+	}
 	return c.sendRequest("POST", "/chat", map[string]interface{}{
 		"user":    user,
 		"message": message,
@@ -305,7 +404,24 @@ func (c *WebSocketTestClient) ReceiveMessage() (*ChatResponse, error) {
 func (c *WebSocketTestClient) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.connected
+
+	if !c.connected || c.conn == nil {
+		return false
+	}
+
+	// 尝试写入一个ping消息来检测连接状态
+	err := c.conn.WriteMessage(websocket.PingMessage, []byte{})
+	if err != nil {
+		// 写入失败表示连接断开
+		c.mu.RUnlock()
+		c.mu.Lock()
+		c.connected = false
+		c.mu.Unlock()
+		c.mu.RLock()
+		return false
+	}
+
+	return true
 }
 
 // sendRequest 发送请求
@@ -313,7 +429,7 @@ func (c *WebSocketTestClient) sendRequest(method, path string, data interface{})
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if !c.connected {
+	if !c.connected || c.conn == nil {
 		return fmt.Errorf("client is not connected")
 	}
 
@@ -330,6 +446,12 @@ func (c *WebSocketTestClient) sendRequest(method, path string, data interface{})
 
 	err = c.conn.WriteMessage(websocket.TextMessage, requestData)
 	if err != nil {
+		// 更新连接状态
+		c.mu.RUnlock()
+		c.mu.Lock()
+		c.connected = false
+		c.mu.Unlock()
+		c.mu.RLock()
 		return fmt.Errorf("failed to send request: %v", err)
 	}
 
@@ -462,7 +584,7 @@ func (c *UnixSocketTestClient) sendRequest(method, path string, data interface{}
 
 	// 添加换行符作为消息分隔符
 	requestData = append(requestData, '\n')
-	
+
 	_, err = c.conn.Write(requestData)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %v", err)

@@ -238,6 +238,11 @@ func (tsm *TestServerManager) waitForServerReady() error {
 	}
 }
 
+// Stop 停止服务器（别名方法，用于测试）
+func (tsm *TestServerManager) Stop() error {
+	return tsm.StopServer()
+}
+
 // removeFile 删除文件，忽略错误
 func removeFile(path string) error {
 	return os.Remove(path)

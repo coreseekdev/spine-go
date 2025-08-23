@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"fmt"
 	"net"
 	"sync"
 )
@@ -12,6 +13,7 @@ type ConnectionManager interface {
 	GetConnection(connID string) (*ConnInfo, bool)
 	GetAllConnections() []*ConnInfo
 	GetStats() map[string]interface{}
+	CloseAllConnections() error
 }
 
 // connectionManager 连接管理器的具体实现，管理所有传输层的连接
@@ -73,6 +75,35 @@ func (cm *connectionManager) GetStats() map[string]interface{} {
 		"total": len(cm.connections),
 	}
 	return stats
+}
+
+// CloseAllConnections 关闭所有连接
+func (cm *connectionManager) CloseAllConnections() error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	var errs []error
+	for connID, conn := range cm.connections {
+		// 关闭Reader和Writer
+		if conn.Reader != nil {
+			if err := conn.Reader.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to close reader for connection %s: %v", connID, err))
+			}
+		}
+		if conn.Writer != nil {
+			if err := conn.Writer.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to close writer for connection %s: %v", connID, err))
+			}
+		}
+	}
+
+	// 清空连接映射
+	cm.connections = make(map[string]*ConnInfo)
+
+	if len(errs) > 0 {
+		return fmt.Errorf("errors closing connections: %v", errs)
+	}
+	return nil
 }
 
 // ServerContext 统一的服务器上下文，管理所有传输层的共享状态
