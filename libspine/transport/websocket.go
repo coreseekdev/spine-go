@@ -2,7 +2,7 @@ package transport
 
 import (
 	"context"
-	"net"
+	"log"
 	"net/http"
 	"time"
 
@@ -56,14 +56,36 @@ func (w *WebSocketTransport) Start(serverCtx *ServerContext) error {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// 如果有静态文件路径，设置静态文件服务
-	if staticPath, ok := serverCtx.ServerInfo.Config["static_path"].(string); ok && staticPath != "" {
+	// 获取静态文件路径
+	staticPath := ""
+	if serverCtx != nil && serverCtx.ServerInfo != nil && serverCtx.ServerInfo.Config != nil {
+		if pathValue, ok := serverCtx.ServerInfo.Config["static_path"].(string); ok && pathValue != "" {
+			staticPath = pathValue
+		}
+	}
+
+	// 设置静态文件服务
+	if staticPath != "" {
+		// 使用配置的静态文件路径
+		log.Printf("Using configured static path: %s", staticPath)
+		w.router.StaticFile("/", staticPath+"/index.html")
+		w.router.StaticFile("/index.html", staticPath+"/index.html")
+		w.router.StaticFile("/style.css", staticPath+"/style.css")
+		w.router.StaticFile("/chat.js", staticPath+"/chat.js")
 		w.router.Static("/static", staticPath)
+	} else {
+		// 使用默认的静态文件路径
+		log.Printf("Using default static path: web/")
+		w.router.StaticFile("/", "web/index.html")
+		w.router.StaticFile("/index.html", "web/index.html")
+		w.router.StaticFile("/style.css", "web/style.css")
+		w.router.StaticFile("/chat.js", "web/chat.js")
+		w.router.Static("/static", "./web")
 	}
 
 	go func() {
 		if err := w.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			// 记录错误但不返回，因为这是在 goroutine 中
+			log.Printf("WebSocket server error: %v", err)
 		}
 	}()
 
@@ -109,25 +131,26 @@ func (w *WebSocketTransport) handleWebSocket(c *gin.Context) {
 		}
 	}
 
-	// 处理消息直到连接关闭
-	for {
-		// 直接从服务器上下文获取处理器
-		var handler Handler
+	// 获取处理器
+	var handler Handler
+	if w.serverCtx != nil {
+		handler = w.serverCtx.GetHandler()
+	}
 
-		// 使用服务器上下文中的处理器
-		if w.serverCtx != nil {
-			handler = w.serverCtx.GetHandler()
-		}
-
-		if handler != nil {
-			if err := handler.Handle(ctx, reader, writer); err != nil {
-				// 处理错误，如果是连接关闭则退出循环
-				break
+	// 如果有处理器，调用一次 Handle 方法
+	// Handle 方法内部会处理消息直到连接关闭
+	if handler != nil {
+		err := handler.Handle(ctx, reader, writer)
+		if err != nil {
+			// 处理网络相关的常见错误，避免过多日志
+			if isNetworkError(err) {
+				log.Printf("WebSocket connection closed: %s", connInfo.ID)
+			} else {
+				log.Printf("WebSocket handler error: %v", err)
 			}
-		} else {
-			// 没有处理器，等待一段时间再尝试
-			time.Sleep(100 * time.Millisecond)
 		}
+	} else {
+		log.Printf("No handler available for WebSocket connection: %s", connInfo.ID)
 	}
 }
 
@@ -141,18 +164,6 @@ func (w *WebSocketTransport) Stop() error {
 		return w.server.Shutdown(ctx)
 	}
 	return nil
-}
-
-// Broadcast 广播消息到所有连接的客户端
-func (w *WebSocketTransport) Broadcast(data []byte) error {
-	// 广播功能现在通过统一连接管理器实现
-	return nil
-}
-
-// NewHandlers 创建 WebSocket 处理器
-// WebSocket 不使用传统的 NewHandlers 模式，返回 nil
-func (w *WebSocketTransport) NewHandlers(conn net.Conn) (Reader, Writer) {
-	return nil, nil
 }
 
 // GetConnections 获取当前连接数（通过统一连接管理器）
@@ -192,7 +203,8 @@ type WebSocketWriter struct {
 
 // Write 写入原始数据
 func (w *WebSocketWriter) Write(data []byte) error {
-	return w.conn.WriteMessage(websocket.BinaryMessage, data)
+	log.Printf("WebSocketWriter.Write: Sending message type: %d, data: %s", websocket.TextMessage, string(data))
+	return w.conn.WriteMessage(websocket.TextMessage, data)
 }
 
 // Close 关闭写入器
@@ -206,4 +218,18 @@ func (w *WebSocketWriter) Close() error {
 // generateConnID 生成连接ID
 func generateConnID() string {
 	return "ws_" + generateID()
+}
+
+// isNetworkError 判断是否为网络相关的常见错误
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := err.Error()
+	return errMsg == "EOF" ||
+		errMsg == "write: broken pipe" ||
+		errMsg == "connection reset by peer" ||
+		errMsg == "use of closed network connection" ||
+		websocket.IsCloseError(err) ||
+		websocket.IsUnexpectedCloseError(err)
 }

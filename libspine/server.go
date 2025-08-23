@@ -61,7 +61,7 @@ func (s *Server) Start() error {
 		wg.Add(1)
 		go func(config ListenConfig) {
 			defer wg.Done()
-			if err := s.startTransport(config); err != nil {
+			if err := s.startTransport(config, s.config.ServerMode, s.config.StaticPath); err != nil {
 				errs = append(errs, fmt.Errorf("%s error: %v", config.Schema, err))
 			}
 		}(listenConfig)
@@ -77,7 +77,7 @@ func (s *Server) Start() error {
 }
 
 // startTransport 根据配置启动传输层
-func (s *Server) startTransport(config ListenConfig) error {
+func (s *Server) startTransport(config ListenConfig, _ string, staticPath string) error {
 	var transportInstance transport.Transport
 	var err error
 	var address string
@@ -89,11 +89,11 @@ func (s *Server) startTransport(config ListenConfig) error {
 		if err != nil {
 			return err
 		}
-		
+
 		s.mu.Lock()
 		s.transports = append(s.transports, transportInstance)
 		s.mu.Unlock()
-		
+
 		log.Printf("TCP transport starting on %s", address)
 		return transportInstance.Start(s.serverCtx)
 
@@ -103,33 +103,40 @@ func (s *Server) startTransport(config ListenConfig) error {
 		if err != nil {
 			return err
 		}
-		
+
 		s.mu.Lock()
 		s.transports = append(s.transports, transportInstance)
 		s.mu.Unlock()
-		
+
 		log.Printf("Unix socket transport starting on %s", address)
 		return transportInstance.Start(s.serverCtx)
 
-	case "ws":
+	case "http":
 		address := config.Host + ":" + config.Port
 		if config.Path != "" {
 			address += "/" + config.Path
 		}
 		transportInstance = transport.NewWebSocketTransport(address)
-		
+
 		s.mu.Lock()
 		s.transports = append(s.transports, transportInstance)
 		s.mu.Unlock()
-		
+
+		// 设置静态文件路径到服务器上下文
+		if staticPath != "" {
+			s.serverCtx.ServerInfo.Config["static_path"] = staticPath
+		}
+
 		log.Printf("WebSocket transport starting on %s", address)
+		if staticPath != "" {
+			log.Printf("WebSocket static files path: %s", staticPath)
+		}
 		return transportInstance.Start(s.serverCtx)
 
 	default:
 		return fmt.Errorf("unsupported schema: %s", config.Schema)
 	}
 }
-
 
 // Stop 停止服务器
 func (s *Server) Stop() error {
@@ -172,42 +179,45 @@ func (s *Server) GetConnections() []*transport.ConnInfo {
 
 // registerHandlers 注册处理器
 func (s *Server) registerHandlers() {
-	var mainHandler handler.Handler
+	// var mainHandler handler.Handler
+	/*
+		// 根据服务器模式选择处理器
+		switch s.config.ServerMode {
+		case "chat":
+			chatHandler := handler.NewChatHandler()
+			if s.config.StaticPath != "" {
+				chatHandler.SetStaticPath(s.config.StaticPath)
+			}
+			mainHandler = chatHandler
+			log.Printf("Server mode: Chat")
+			if s.config.StaticPath != "" {
+				log.Printf("Static files path: %s", s.config.StaticPath)
+			}
 
-	// 根据服务器模式选择处理器
-	switch s.config.ServerMode {
-	case "chat":
-		chatHandler := handler.NewChatHandler()
-		if s.config.StaticPath != "" {
-			chatHandler.SetStaticPath(s.config.StaticPath)
-		}
-		mainHandler = chatHandler
-		log.Printf("Server mode: Chat")
-		if s.config.StaticPath != "" {
-			log.Printf("Static files path: %s", s.config.StaticPath)
-		}
+		//case "redis":
+		//	redisHandler := handler.NewRedisHandler(s.config.RedisAddr, s.config.RedisPass, s.config.RedisDB)
+		//	mainHandler = redisHandler
+		//	log.Printf("Server mode: Redis")
 
-	//case "redis":
-	//	redisHandler := handler.NewRedisHandler(s.config.RedisAddr, s.config.RedisPass, s.config.RedisDB)
-	//	mainHandler = redisHandler
-	//	log.Printf("Server mode: Redis")
-
-	default:
-		// 默认使用聊天模式
-		chatHandler := handler.NewChatHandler()
-		if s.config.StaticPath != "" {
-			chatHandler.SetStaticPath(s.config.StaticPath)
+		default:
+			// 默认使用聊天模式
+			chatHandler := handler.NewChatHandler()
+			if s.config.StaticPath != "" {
+				chatHandler.SetStaticPath(s.config.StaticPath)
+			}
+			mainHandler = chatHandler
+			log.Printf("Server mode: Chat (default)")
+			if s.config.StaticPath != "" {
+				log.Printf("Static files path: %s", s.config.StaticPath)
+			}
 		}
-		mainHandler = chatHandler
-		log.Printf("Server mode: Chat (default)")
-		if s.config.StaticPath != "" {
-			log.Printf("Static files path: %s", s.config.StaticPath)
-		}
+	*/
+	chatHandler := handler.NewChatHandler()
+	if s.config.StaticPath != "" {
+		chatHandler.SetStaticPath(s.config.StaticPath)
 	}
-
 	// 直接设置处理器到服务器上下文
-	s.serverCtx.SetHandler(mainHandler)
+	s.serverCtx.SetHandler(chatHandler)
 
 	log.Printf("Registered handler for server mode: %s", s.config.ServerMode)
 }
-

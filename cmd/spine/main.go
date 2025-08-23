@@ -19,7 +19,7 @@ func main() {
 	)
 
 	// 自定义 flag 函数来收集多个 --listen 参数
-	flag.Func("listen", "Listen address (format: schema://host:port, e.g., tcp://:8080, ws://:8081, unix:///tmp/spine.sock). Can be specified multiple times.", func(value string) error {
+	flag.Func("listen", "Listen address (format: schema://host:port, e.g., tcp://:8080, http://:8000, unix:///tmp/spine.sock). Can be specified multiple times.", func(value string) error {
 		listenArgs = append(listenArgs, value)
 		return nil
 	})
@@ -80,7 +80,7 @@ func main() {
 	if len(listenConfigs) == 0 {
 		listenConfigs = []libspine.ListenConfig{
 			{Schema: "tcp", Host: "", Port: "8080", Path: ""},
-			{Schema: "ws", Host: "", Port: "8081", Path: ""},
+			{Schema: "http", Host: "", Port: "8000", Path: ""},
 		}
 	}
 

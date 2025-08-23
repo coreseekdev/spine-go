@@ -7,9 +7,9 @@ A modular chat application built with Go, featuring multiple transport protocols
 The application is divided into four main parts:
 
 1. **libspine** - Core library with transport layer and handler interfaces
-2. **spine** - Main server entry point supporting TCP, Unix Socket, and WebSocket
+2. **spine** - Main server supporting TCP, Unix Socket, and WebSocket transports
 3. **spine-cli** - TCP/Unix socket client for command-line interaction
-4. **spine-ws** - WebSocket server with web interface
+4. **spine-ws** - WebSocket client application with web interface
 
 ## Features
 
@@ -31,10 +31,18 @@ The application is divided into four main parts:
 ## Building
 
 ```bash
-# Build all components
-go build -o spine ./spine/
-go build -o spine-cli ./spine-cli/
-go build -o spine-ws ./spine-ws/
+# Build all components using make
+make all
+
+# Or build individual components
+make spine
+make spine-cli
+make spine-ws
+
+# Alternatively, build manually
+go build -o bin/spine ./cmd/spine/
+go build -o bin/spine-cli ./cmd/spine-cli/
+go build -o bin/spine-ws ./cmd/spine-ws/
 ```
 
 ## Usage
@@ -42,31 +50,37 @@ go build -o spine-ws ./spine-ws/
 ### Starting the Server
 
 ```bash
-# Start with default settings (TCP:8080, WebSocket:8081, Unix Socket:/tmp/spine.sock)
-./spine
+# Start with default settings
+./bin/spine
 
-# Start with custom settings
-./spine -tcp-port=8080 -ws-port=8081 -unix-socket=/tmp/spine.sock -redis-addr=localhost:6379
+# Start with custom listen addresses
+./bin/spine -listen=tcp://:8080 -listen=ws://:8081 -listen=unix:///tmp/spine.sock
+
+# Start with static file serving for web UI
+./bin/spine -static=./web
 ```
 
 ### Using the CLI Client
 
 ```bash
 # Chat mode (default)
-./spine-cli -server=localhost:8080 -protocol=tcp -mode=chat
+./bin/spine-cli -server=localhost:8080 -protocol=tcp -mode=chat
 
 # Redis mode
-./spine-cli -server=localhost:8080 -protocol=tcp -mode=redis
+./bin/spine-cli -server=localhost:8080 -protocol=tcp -mode=redis
 
 # Unix socket mode
-./spine-cli -socket=/tmp/spine.sock -protocol=unix -mode=chat
+./bin/spine-cli -socket=/tmp/spine.sock -protocol=unix -mode=chat
 ```
 
 ### Using the WebSocket Interface
 
 ```bash
-# Start WebSocket server
-./spine-ws -port=8081
+# Start WebSocket client
+./bin/spine-ws -port=8081
+
+# Or use the convenience script
+./start-web-chat.sh
 
 # Access web interface
 open http://localhost:8081
@@ -97,15 +111,9 @@ The WebSocket server provides a web interface with:
 ## Configuration
 
 ### Server Options
-- `-tcp-port` - TCP server port (default: 8080)
-- `-ws-port` - WebSocket server port (default: 8081)
-- `-unix-socket` - Unix socket path (default: /tmp/spine.sock)
-- `-redis-addr` - Redis server address (default: localhost:6379)
-- `-redis-pass` - Redis password (default: "")
-- `-redis-db` - Redis database number (default: 0)
-- `-enable-tcp` - Enable TCP server (default: true)
-- `-enable-unix` - Enable Unix socket server (default: true)
-- `-enable-ws` - Enable WebSocket server (default: true)
+- `-listen` - Listen address (format: schema://host:port, e.g., tcp://:8080, ws://:8081, unix:///tmp/spine.sock). Can be specified multiple times.
+- `-mode` - Server mode (chat/redis) (default: chat)
+- `-static` - Static files path for chat webui
 
 ### Client Options
 - `-server` - Server address (default: localhost:8080)
@@ -122,15 +130,21 @@ The WebSocket server provides a web interface with:
 
 ```
 spine-go/
-├── libspine/           # Core library
-│   ├── transport/      # Transport layer implementations
-│   ├── handler/        # Handler implementations
-│   ├── server.go       # Server implementation
-│   └── client.go       # Client implementation
-├── spine/              # Main server entry point
-├── spine-cli/          # CLI client
-├── spine-ws/           # WebSocket server
-└── go.mod              # Go module definition
+├── bin/               # Compiled executables
+├── cmd/               # Source code for executables
+│   ├── spine/         # Main server source
+│   ├── spine-cli/     # CLI client source
+│   └── spine-ws/      # WebSocket client source
+├── libspine/          # Core library
+│   ├── transport/     # Transport layer implementations
+│   ├── handler/       # Handler implementations
+│   ├── server.go      # Server implementation
+│   └── client.go      # Client implementation
+├── web/               # Web UI static files
+│   ├── index.html     # Main HTML page
+│   ├── chat.js        # JavaScript for chat functionality
+│   └── style.css      # CSS styling
+└── go.mod             # Go module definition
 ```
 
 ## Examples
@@ -139,19 +153,19 @@ spine-go/
 
 1. Start the server:
 ```bash
-./spine
+./bin/spine
 ```
 
 2. Start two CLI clients:
 ```bash
 # Terminal 1
-./spine-cli -mode=chat
+./bin/spine-cli -mode=chat
 # Enter username: alice
 # /join general
 # Hello everyone!
 
 # Terminal 2
-./spine-cli -mode=chat
+./bin/spine-cli -mode=chat
 # Enter username: bob
 # /join general
 # Hi alice!
@@ -159,14 +173,14 @@ spine-go/
 
 ### Redis Operations
 
-1. Start the server with Redis:
+1. Start the server with Redis mode:
 ```bash
-./spine -redis-addr=localhost:6379
+./bin/spine -mode=redis
 ```
 
 2. Use CLI client:
 ```bash
-./spine-cli -mode=redis
+./bin/spine-cli -mode=redis
 redis> SET mykey hello
 redis> GET mykey
 redis> DELETE mykey
@@ -174,9 +188,9 @@ redis> DELETE mykey
 
 ### Web Interface
 
-1. Start WebSocket server:
+1. Start WebSocket client:
 ```bash
-./spine-ws
+./bin/spine-ws
 ```
 
 2. Open browser to `http://localhost:8081`

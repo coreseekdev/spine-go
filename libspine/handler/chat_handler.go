@@ -1,10 +1,9 @@
 package handler
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log"
 	"spine-go/libspine/transport"
 	"sync"
 	"time"
@@ -34,12 +33,12 @@ type ChatResponse struct {
 
 // ChatHandler 聊天处理器
 type ChatHandler struct {
-	messages     []*ChatMessage
-	mu           sync.RWMutex
-	activeConns  map[string]bool // connectionID -> active
+	messages      []*ChatMessage
+	mu            sync.RWMutex
+	activeConns   map[string]bool // connectionID -> active
 	connectionsMu sync.RWMutex
-	wsTransport  interface{} // WebSocket transport for broadcasting
-	staticPath   string      // 静态文件路径
+	wsTransport   interface{} // WebSocket transport for broadcasting
+	staticPath    string      // 静态文件路径
 }
 
 // NewChatHandler 创建新的聊天处理器
@@ -60,7 +59,6 @@ func (h *ChatHandler) SetStaticPath(path string) {
 	h.staticPath = path
 }
 
-
 // Handle 处理聊天请求
 func (h *ChatHandler) Handle(ctx *transport.Context, req transport.Reader, res transport.Writer) error {
 	// 使用 ConnInfo 中的 Reader 和 Writer
@@ -73,29 +71,55 @@ func (h *ChatHandler) Handle(ctx *transport.Context, req transport.Reader, res t
 		}
 	}
 
-	// 读取原始数据
-	data, err := req.Read()
-	if err != nil {
-		return h.writeError(res, "Failed to read request", 400)
-	}
+	// 持续处理消息直到连接关闭
+	for {
+		// 读取原始数据
+		data, err := req.Read()
+		if err != nil {
+			// 连接关闭或读取错误，清理连接并退出
+			if ctx.ConnInfo != nil {
+				h.connectionsMu.Lock()
+				delete(h.activeConns, ctx.ConnInfo.ID)
+				h.connectionsMu.Unlock()
+				log.Printf("Connection %s closed, removed from active connections", ctx.ConnInfo.ID)
+			}
+			return err
+		}
 
-	// 解析请求
-	var chatReq ChatRequest
-	if err := json.Unmarshal(data, &chatReq); err != nil {
-		return h.writeError(res, "Invalid request format", 400)
-	}
+		// 解析请求
+		var chatReq ChatRequest
+		log.Printf("Received request: %s", string(data))
+		if err := json.Unmarshal(data, &chatReq); err != nil {
+			// 发送错误响应但不关闭连接
+			h.writeError(res, "Invalid request format", 400)
+			continue
+		}
 
-	switch chatReq.Method {
-	case "POST":
-		return h.handlePostMessage(ctx, req, res, &chatReq)
-	case "GET":
-		return h.handleGetMessages(ctx, req, res, &chatReq)
-	case "JOIN":
-		return h.handleJoin(ctx, req, res, &chatReq)
-	case "LEAVE":
-		return h.handleLeave(ctx, req, res, &chatReq)
-	default:
-		return h.writeError(res, "Method not allowed", 405)
+		// 处理请求
+		var handleErr error
+		switch chatReq.Method {
+		case "POST":
+			handleErr = h.handlePostMessage(ctx, req, res, &chatReq)
+		case "GET":
+			handleErr = h.handleGetMessages(ctx, req, res, &chatReq)
+		case "JOIN":
+			handleErr = h.handleJoin(ctx, req, res, &chatReq)
+		case "LEAVE":
+			handleErr = h.handleLeave(ctx, req, res, &chatReq)
+		case "PING":
+			// 处理心跳请求
+			handleErr = h.writeSuccess(res, map[string]interface{}{
+				"status":  "success",
+				"message": "pong",
+			})
+		default:
+			handleErr = h.writeError(res, "Method not allowed", 405)
+		}
+
+		// 如果处理请求时出错，记录但不关闭连接
+		if handleErr != nil {
+			log.Printf("Error handling request: %v", handleErr)
+		}
 	}
 }
 
@@ -202,17 +226,22 @@ func (h *ChatHandler) broadcastToAll(ctx *transport.Context, msg *ChatMessage) {
 
 	response := &ChatResponse{
 		Status: 200,
-		Data:    msg,
+		Data:   msg,
 	}
 
-	data, _ := json.Marshal(response)
-	responseData := h.createBinaryMessage(data)
+	data, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("broadcastToAll: Error marshaling response: %v", err)
+		return
+	}
+	log.Printf("broadcastToAll: Broadcasting JSON message: %s", string(data))
+	// 直接使用 JSON 文本而不是二进制格式
 
 	// 向所有活跃连接广播消息
 	for _, connID := range activeConnIDs {
 		if connInfo, exists := ctx.ConnectionManager.GetConnection(connID); exists {
 			if connInfo.Writer != nil {
-				if err := connInfo.Writer.Write(responseData); err != nil {
+				if err := connInfo.Writer.Write(data); err != nil {
 					// 如果写入失败，从活跃连接中移除该连接
 					h.connectionsMu.Lock()
 					delete(h.activeConns, connID)
@@ -225,7 +254,8 @@ func (h *ChatHandler) broadcastToAll(ctx *transport.Context, msg *ChatMessage) {
 	// 向 WebSocket 客户端广播
 	if h.wsTransport != nil {
 		if wsTransport, ok := h.wsTransport.(interface{ Broadcast([]byte) error }); ok {
-			wsTransport.Broadcast(responseData)
+			// 直接使用 JSON 文本而不是二进制格式
+			wsTransport.Broadcast(data)
 		}
 	}
 }
@@ -242,8 +272,9 @@ func (h *ChatHandler) writeSuccess(res transport.Writer, data interface{}) error
 		return h.writeError(res, "Failed to marshal response", 500)
 	}
 
-	binaryData := h.createBinaryMessage(respData)
-	return res.Write(binaryData)
+	// 直接发送 JSON 文本而不是二进制格式
+	log.Printf("writeSuccess: Sending JSON response: %s", string(respData))
+	return res.Write(respData)
 }
 
 // writeError 写入错误响应
@@ -255,22 +286,16 @@ func (h *ChatHandler) writeError(res transport.Writer, message string, status in
 
 	respData, err := json.Marshal(response)
 	if err != nil {
-		return res.Write([]byte(`{"error":"Internal server error"}`))
+		log.Printf("writeError: Error marshaling response: %v", err)
+		return res.Write([]byte(`{"error":"Internal server error"}`)) 
 	}
 
-	binaryData := h.createBinaryMessage(respData)
-	return res.Write(binaryData)
+	// 直接发送 JSON 文本而不是二进制格式
+	log.Printf("writeError: Sending JSON error response: %s", string(respData))
+	return res.Write(respData)
 }
 
-// createBinaryMessage 创建二进制消息格式
-func (h *ChatHandler) createBinaryMessage(data []byte) []byte {
-	// 简单的协议：[4字节长度] + [数据]
-	length := uint32(len(data))
-	buffer := new(bytes.Buffer)
-	binary.Write(buffer, binary.BigEndian, length)
-	buffer.Write(data)
-	return buffer.Bytes()
-}
+// createBinaryMessage 方法已删除，因为我们现在使用纯文本 JSON
 
 // generateID 生成唯一 ID
 func generateID() string {

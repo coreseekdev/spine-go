@@ -124,13 +124,17 @@ func (t *TCPTransport) handleConnection(conn net.Conn) {
 	// 连接关闭时从管理器移除
 	defer t.serverCtx.Connections.RemoveConnection(connInfo.ID)
 
-	// 持续处理连接上的数据
-	for {
-		// 获取处理器并处理数据
-		handler := t.serverCtx.GetHandler()
-		if handler != nil {
-			if err := handler.Handle(ctx, reader, writer); err != nil {
-				log.Printf("TCP handler error: %v", err)
+	// 获取处理器
+	handler := t.serverCtx.GetHandler()
+	if handler != nil {
+		// 只调用一次 Handle，让 Handle 方法负责持续处理连接
+		err := handler.Handle(ctx, reader, writer)
+		if err != nil {
+			// 只记录非网络错误，避免大量 broken pipe 日志
+			if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
+				if err.Error() != "EOF" && err.Error() != "write: broken pipe" {
+					log.Printf("TCP handler error: %v", err)
+				}
 			}
 		}
 	}

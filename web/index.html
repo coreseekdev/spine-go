@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spine 聊天</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>Spine 聊天</h1>
+            <div class="connection-status">
+                <div id="status-indicator" class="status-indicator status-disconnected"></div>
+                <span id="status-text">未连接</span>
+            </div>
+        </div>
+        
+        <div class="chat-body">
+            <div id="chat-messages" class="chat-messages"></div>
+        </div>
+        
+        <div class="chat-footer">
+            <div class="username-container">
+                <input type="text" id="username-input" placeholder="输入您的用户名" maxlength="20">
+                <button id="set-username-btn">设置用户名</button>
+            </div>
+            
+            <div class="message-container">
+                <input type="text" id="message-input" placeholder="输入消息..." maxlength="500" disabled>
+                <button id="send-btn" disabled>发送</button>
+            </div>
+        </div>
+        
+        <div class="chat-info">
+            <div class="online-users">
+                <span>在线用户: </span>
+                <span id="online-count">0</span>
+            </div>
+        </div>
+    </div>
+    
+    <script src="chat.js"></script>
+</body>
+</html>

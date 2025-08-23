@@ -16,7 +16,6 @@ import (
 type ChatMessage struct {
 	User    string `json:"user"`
 	Message string `json:"message"`
-	Room    string `json:"room"`
 }
 
 type RedisRequest struct {
@@ -32,12 +31,13 @@ func main() {
 		protocol   = flag.String("protocol", "tcp", "Protocol (tcp/unix)")
 		socketPath = flag.String("socket", "/tmp/spine.sock", "Unix socket path")
 		mode       = flag.String("mode", "chat", "Mode (chat/redis)")
+		username   = flag.String("username", "", "Username for chat mode")
 	)
 	flag.Parse()
 
 	switch *mode {
 	case "chat":
-		runChatClient(*protocol, *serverAddr, *socketPath)
+		runChatClient(*protocol, *serverAddr, *socketPath, *username)
 	case "redis":
 		runRedisClient(*protocol, *serverAddr, *socketPath)
 	default:
@@ -45,7 +45,7 @@ func main() {
 	}
 }
 
-func runChatClient(protocol, serverAddr, socketPath string) {
+func runChatClient(protocol, serverAddr, socketPath, username string) {
 	var conn net.Conn
 	var err error
 
@@ -65,13 +65,11 @@ func runChatClient(protocol, serverAddr, socketPath string) {
 
 	fmt.Println("Connected to chat server")
 	fmt.Println("Available commands:")
-	fmt.Println("  /join <room> - Join a room")
-	fmt.Println("  /leave <room> - Leave a room")
-	fmt.Println("  /get <room> - Get messages from room")
+	fmt.Println("  /join - Join the chat")
+	fmt.Println("  /leave - Leave the chat")
+	fmt.Println("  /get - Get all messages")
 	fmt.Println("  /quit - Quit")
-	fmt.Println("  Any other message will be sent to current room")
-
-	var currentRoom string
+	fmt.Println("  Any other message will be sent to the chat")
 
 	go func() {
 		scanner := bufio.NewScanner(conn)
@@ -81,11 +79,19 @@ func runChatClient(protocol, serverAddr, socketPath string) {
 	}()
 
 	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Print("Enter your username: ")
-	if !scanner.Scan() {
-		return
+	
+	// If username wasn't provided as a command line argument, prompt for it
+	if username == "" {
+		fmt.Print("Enter your username: ")
+		if !scanner.Scan() {
+			return
+		}
+		username = strings.TrimSpace(scanner.Text())
 	}
-	username := strings.TrimSpace(scanner.Text())
+	
+	// Join the chat automatically
+	sendChatRequest(conn, "JOIN", "/chat", nil)
+	fmt.Println("Joined the chat as", username)
 
 	for {
 		fmt.Print("> ")
@@ -102,33 +108,20 @@ func runChatClient(protocol, serverAddr, socketPath string) {
 			break
 		}
 
-		if strings.HasPrefix(input, "/join ") {
-			room := strings.TrimPrefix(input, "/join ")
-			currentRoom = room
-			sendChatRequest(conn, "JOIN", "/chat", map[string]interface{}{
-				"room": room,
-			})
+		if input == "/join" {
+			sendChatRequest(conn, "JOIN", "/chat", nil)
+			fmt.Println("Joined the chat")
 			continue
 		}
 
-		if strings.HasPrefix(input, "/leave ") {
-			room := strings.TrimPrefix(input, "/leave ")
-			sendChatRequest(conn, "LEAVE", "/chat", map[string]interface{}{
-				"room": room,
-			})
+		if input == "/leave" {
+			sendChatRequest(conn, "LEAVE", "/chat", nil)
+			fmt.Println("Left the chat")
 			continue
 		}
 
-		if strings.HasPrefix(input, "/get ") {
-			room := strings.TrimPrefix(input, "/get ")
-			sendChatRequest(conn, "GET", "/chat", map[string]interface{}{
-				"room": room,
-			})
-			continue
-		}
-
-		if currentRoom == "" {
-			fmt.Println("Please join a room first with /join <room>")
+		if input == "/get" {
+			sendChatRequest(conn, "GET", "/chat", nil)
 			continue
 		}
 
@@ -136,7 +129,6 @@ func runChatClient(protocol, serverAddr, socketPath string) {
 		sendChatRequest(conn, "POST", "/chat", ChatMessage{
 			User:    username,
 			Message: input,
-			Room:    currentRoom,
 		})
 	}
 }
