@@ -145,8 +145,8 @@ func (t *TCPTransport) handleConnection(conn net.Conn) {
 		if err != nil {
 			// 只记录非网络错误，避免大量 broken pipe 日志
 			if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
-				if err.Error() != "EOF" && err.Error() != "write: broken pipe" && 
-				   err.Error() != "use of closed network connection" {
+				if err.Error() != "EOF" && err.Error() != "write: broken pipe" &&
+					err.Error() != "use of closed network connection" {
 					log.Printf("TCP handler error: %v", err)
 				}
 			}
@@ -180,12 +180,9 @@ type TCPWriter struct {
 
 // Write 写入数据，符合 io.Writer 接口
 func (w *TCPWriter) Write(p []byte) (n int, err error) {
-	// 确保数据以换行符结尾，这样客户端可以正确读取
-	data := p
-	if len(data) > 0 && data[len(data)-1] != '\n' {
-		data = append(data, '\n')
-	}
-	n, err = w.Conn.Write(data)
+	// 直接写入原始数据，不做任何修改
+	// 注意：如果需要使用 JSONL 协议，应在调用此方法前添加换行符
+	n, err = w.Conn.Write(p)
 	if err != nil {
 		return n, err
 	}

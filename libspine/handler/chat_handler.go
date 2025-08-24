@@ -247,8 +247,10 @@ func (h *ChatHandler) broadcastToAll(ctx *transport.Context, msg *ChatMessage) {
 	for _, connID := range activeConnIDs {
 		if connInfo, exists := ctx.ConnectionManager.GetConnection(connID); exists {
 			if connInfo.Writer != nil {
+				// 为 JSONL 协议添加换行符
+				dataWithNewline := append(data, '\n')
 				// 立即写入并刷新，确保消息被发送
-				if _, err := connInfo.Writer.Write(data); err != nil {
+				if _, err := connInfo.Writer.Write(dataWithNewline); err != nil {
 					log.Printf("broadcastToAll: Failed to write to connection %s: %v", connID, err)
 					// 如果写入失败，从活跃连接中移除该连接
 					h.connectionsMu.Lock()
@@ -281,9 +283,11 @@ func (h *ChatHandler) writeSuccess(res transport.Writer, data interface{}) error
 		return h.writeError(res, "Failed to marshal response", 500)
 	}
 
+	// 为 JSONL 协议添加换行符
+	respDataWithNewline := append(respData, '\n')
 	// 直接发送 JSON 文本而不是二进制格式
 	log.Printf("writeSuccess: Sending JSON response: %s", string(respData))
-	_, err = res.Write(respData)
+	_, err = res.Write(respDataWithNewline)
 	return err
 }
 
@@ -297,13 +301,15 @@ func (h *ChatHandler) writeError(res transport.Writer, message string, status in
 	respData, err := json.Marshal(response)
 	if err != nil {
 		log.Printf("writeError: Error marshaling response: %v", err)
-		_, err := res.Write([]byte(`{"error":"Internal server error"}`))
+		_, err := res.Write([]byte(fmt.Sprintf(`{"error":"%s"}\n`, message)))
 		return err 
 	}
 
+	// 为 JSONL 协议添加换行符
+	respDataWithNewline := append(respData, '\n')
 	// 直接发送 JSON 文本而不是二进制格式
 	log.Printf("writeError: Sending JSON error response: %s", string(respData))
-	_, err = res.Write(respData)
+	_, err = res.Write(respDataWithNewline)
 	return err
 }
 
