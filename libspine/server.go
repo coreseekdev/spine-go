@@ -220,12 +220,17 @@ func (s *Server) registerHandlers() {
 			}
 		}
 	*/
-	chatHandler := handler.NewChatHandler()
-	if s.config.StaticPath != "" {
-		chatHandler.SetStaticPath(s.config.StaticPath)
+	if s.config.ServerMode == "chat" {
+		chatHandler := handler.NewChatHandler()
+		if s.config.StaticPath != "" {
+			chatHandler.SetStaticPath(s.config.StaticPath)
+		}
+		// 直接设置处理器到服务器上下文
+		s.serverCtx.SetHandler(chatHandler)
+	} else if s.config.ServerMode == "redis" {
+		redisHandler := handler.NewRedisHandler()
+		s.serverCtx.SetHandler(redisHandler)
 	}
-	// 直接设置处理器到服务器上下文
-	s.serverCtx.SetHandler(chatHandler)
 
 	log.Printf("Registered handler for server mode: %s", s.config.ServerMode)
 }
