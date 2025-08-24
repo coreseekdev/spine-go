@@ -79,7 +79,7 @@ func (h *RedisHandler) parseRESPCommand(reader *bufio.Reader) ([]string, error) 
 	if isPrefix {
 		return nil, fmt.Errorf("line too long")
 	}
-	
+
 	lineStr := string(lineBytes)
 	if len(lineStr) == 0 || lineStr[0] != '*' {
 		return nil, fmt.Errorf("expected array, got: %s", lineStr)
@@ -102,7 +102,7 @@ func (h *RedisHandler) parseRESPCommand(reader *bufio.Reader) ([]string, error) 
 		if isPrefix {
 			return nil, fmt.Errorf("line too long")
 		}
-		
+
 		lengthStr := string(lineBytes)
 		if len(lengthStr) == 0 || lengthStr[0] != '$' {
 			return nil, fmt.Errorf("expected bulk string, got: %s", lengthStr)
@@ -137,7 +137,7 @@ func (h *RedisHandler) handleCommand(command []string, res transport.Writer) err
 	}
 
 	cmd := strings.ToUpper(command[0])
-	
+
 	switch cmd {
 	case "PING":
 		return h.writeRESPSimpleString(res, "PONG")
@@ -369,16 +369,11 @@ func (h *RedisHandler) writeRESPInteger(res transport.Writer, value int64) error
 	return err
 }
 
-// generateRedisID 生成唯一 ID
-func generateRedisID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
-}
-
 // Close 关闭内存数据库连接
 func (h *RedisHandler) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	// 清空内存存储
 	h.store = make(map[string]*RedisItem)
 	return nil
