@@ -1,10 +1,10 @@
 package handler
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"log"
+	"spine-go/libspine/common/resp"
 	"spine-go/libspine/transport"
 	"strconv"
 	"strings"
@@ -22,12 +22,15 @@ type RedisItem struct {
 type RedisHandler struct {
 	store map[string]*RedisItem
 	mu    sync.RWMutex
+	// Protocol version (2 or 3)
+	protocolVersion int
 }
 
 // NewRedisHandler 创建新的 Redis 处理器
 func NewRedisHandler() *RedisHandler {
 	return &RedisHandler{
 		store: make(map[string]*RedisItem),
+		protocolVersion: 2, // Default to RESP v2
 	}
 }
 
@@ -43,123 +46,89 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 		}
 	}
 
-	// 创建 RESP 解析器
-	reader := bufio.NewReader(req)
+	// 创建 RESP 解析器和序列化器
+	respReader := resp.NewRespReader(req)
+	respWriter := resp.NewRespWriter(res)
 
 	// 持续处理消息直到连接关闭
 	for {
 		// 解析 RESP 命令
-		command, err := h.parseRESPCommand(reader)
+		value, err := respReader.ReadValue()
 		if err != nil {
 			// 连接关闭或读取错误
 			if err == io.EOF {
 				return nil
 			}
 			log.Printf("Error parsing RESP command: %v", err)
-			h.writeRESPError(res, fmt.Sprintf("ERR %v", err))
+			respWriter.WriteErrorString("ERR", err.Error())
+			continue
+		}
+
+		// 确保命令是数组类型
+		if value.Type != resp.TypeArray {
+			respWriter.WriteSyntaxError("expected array command")
+			continue
+		}
+
+		// 提取命令参数
+		command := make([]string, 0, len(value.Array))
+		for _, item := range value.Array {
+			if item.Type == resp.TypeBulkString {
+				command = append(command, string(item.Bulk))
+			} else {
+				respWriter.WriteSyntaxError("expected bulk string command arguments")
+				continue
+			}
+		}
+
+		if len(command) == 0 {
+			respWriter.WriteErrorString("ERR", "empty command")
 			continue
 		}
 
 		log.Printf("Received Redis command: %v", command)
 
 		// 处理命令
-		if err := h.handleCommand(command, res); err != nil {
+		if err := h.handleCommand(command, respWriter); err != nil {
 			log.Printf("Error handling Redis command: %v", err)
 		}
 	}
 }
 
-// parseRESPCommand 解析 RESP 命令
-func (h *RedisHandler) parseRESPCommand(reader *bufio.Reader) ([]string, error) {
-	// 读取第一行，应该是数组标识符 *
-	lineBytes, isPrefix, err := reader.ReadLine()
-	if err != nil {
-		return nil, err
-	}
-	if isPrefix {
-		return nil, fmt.Errorf("line too long")
-	}
-
-	lineStr := string(lineBytes)
-	if len(lineStr) == 0 || lineStr[0] != '*' {
-		return nil, fmt.Errorf("expected array, got: %s", lineStr)
-	}
-
-	// 解析数组长度
-	arrayLen, err := strconv.Atoi(lineStr[1:])
-	if err != nil {
-		return nil, fmt.Errorf("invalid array length: %s", lineStr[1:])
-	}
-
-	// 读取数组元素
-	command := make([]string, arrayLen)
-	for i := 0; i < arrayLen; i++ {
-		// 读取批量字符串长度行
-		lineBytes, isPrefix, err := reader.ReadLine()
-		if err != nil {
-			return nil, err
-		}
-		if isPrefix {
-			return nil, fmt.Errorf("line too long")
-		}
-
-		lengthStr := string(lineBytes)
-		if len(lengthStr) == 0 || lengthStr[0] != '$' {
-			return nil, fmt.Errorf("expected bulk string, got: %s", lengthStr)
-		}
-
-		// 解析字符串长度
-		strLen, err := strconv.Atoi(lengthStr[1:])
-		if err != nil {
-			return nil, fmt.Errorf("invalid string length: %s", lengthStr[1:])
-		}
-
-		// 读取字符串内容
-		content := make([]byte, strLen)
-		_, err = io.ReadFull(reader, content)
-		if err != nil {
-			return nil, err
-		}
-
-		// 读取 CRLF
-		reader.ReadLine()
-
-		command[i] = string(content)
-	}
-
-	return command, nil
-}
+// 不再需要 parseRESPCommand 方法，使用 resp.Parser 代替
 
 // handleCommand 处理 Redis 命令
-func (h *RedisHandler) handleCommand(command []string, res transport.Writer) error {
+func (h *RedisHandler) handleCommand(command []string, writer *resp.RespWriter) error {
 	if len(command) == 0 {
-		return h.writeRESPError(res, "ERR empty command")
+		return writer.WriteErrorString("ERR", "empty command")
 	}
 
 	cmd := strings.ToUpper(command[0])
 
 	switch cmd {
 	case "PING":
-		return h.writeRESPSimpleString(res, "PONG")
+		return writer.WritePong()
+	case "HELLO":
+		return h.handleHELLO(command, writer)
 	case "SET":
-		return h.handleSET(command, res)
+		return h.handleSET(command, writer)
 	case "GET":
-		return h.handleGET(command, res)
+		return h.handleGET(command, writer)
 	case "DEL":
-		return h.handleDEL(command, res)
+		return h.handleDEL(command, writer)
 	case "EXISTS":
-		return h.handleEXISTS(command, res)
+		return h.handleEXISTS(command, writer)
 	case "TTL":
-		return h.handleTTL(command, res)
+		return h.handleTTL(command, writer)
 	default:
-		return h.writeRESPError(res, fmt.Sprintf("ERR unknown command '%s'", cmd))
+		return writer.WriteCommandError(fmt.Sprintf("unknown command '%s'", cmd))
 	}
 }
 
 // handleSET 处理 SET 命令
-func (h *RedisHandler) handleSET(command []string, res transport.Writer) error {
+func (h *RedisHandler) handleSET(command []string, writer *resp.RespWriter) error {
 	if len(command) < 3 {
-		return h.writeRESPError(res, "ERR wrong number of arguments for 'set' command")
+		return writer.WriteWrongNumberOfArgumentsError("SET")
 	}
 
 	key := command[1]
@@ -171,36 +140,36 @@ func (h *RedisHandler) handleSET(command []string, res transport.Writer) error {
 		var err error
 		ttl, err = strconv.ParseInt(command[4], 10, 64)
 		if err != nil {
-			return h.writeRESPError(res, "ERR invalid expire time")
+			return writer.WriteErrorString("ERR", "invalid expire time")
 		}
 	}
 
 	if err := h.set(key, value, ttl); err != nil {
-		return h.writeRESPError(res, fmt.Sprintf("ERR %v", err))
+		return writer.WriteErrorString("ERR", err.Error())
 	}
 
-	return h.writeRESPSimpleString(res, "OK")
+	return writer.WriteOK()
 }
 
 // handleGET 处理 GET 命令
-func (h *RedisHandler) handleGET(command []string, res transport.Writer) error {
+func (h *RedisHandler) handleGET(command []string, writer *resp.RespWriter) error {
 	if len(command) != 2 {
-		return h.writeRESPError(res, "ERR wrong number of arguments for 'get' command")
+		return writer.WriteWrongNumberOfArgumentsError("GET")
 	}
 
 	key := command[1]
 	value, err := h.get(key)
 	if err != nil {
-		return h.writeRESPNull(res)
+		return writer.WriteNil()
 	}
 
-	return h.writeRESPBulkString(res, value)
+	return writer.WriteBulkString([]byte(value))
 }
 
 // handleDEL 处理 DEL 命令
-func (h *RedisHandler) handleDEL(command []string, res transport.Writer) error {
+func (h *RedisHandler) handleDEL(command []string, writer *resp.RespWriter) error {
 	if len(command) < 2 {
-		return h.writeRESPError(res, "ERR wrong number of arguments for 'del' command")
+		return writer.WriteWrongNumberOfArgumentsError("DEL")
 	}
 
 	deleted := 0
@@ -210,13 +179,13 @@ func (h *RedisHandler) handleDEL(command []string, res transport.Writer) error {
 		}
 	}
 
-	return h.writeRESPInteger(res, int64(deleted))
+	return writer.WriteInteger(int64(deleted))
 }
 
 // handleEXISTS 处理 EXISTS 命令
-func (h *RedisHandler) handleEXISTS(command []string, res transport.Writer) error {
+func (h *RedisHandler) handleEXISTS(command []string, writer *resp.RespWriter) error {
 	if len(command) < 2 {
-		return h.writeRESPError(res, "ERR wrong number of arguments for 'exists' command")
+		return writer.WriteWrongNumberOfArgumentsError("EXISTS")
 	}
 
 	exists := 0
@@ -226,18 +195,18 @@ func (h *RedisHandler) handleEXISTS(command []string, res transport.Writer) erro
 		}
 	}
 
-	return h.writeRESPInteger(res, int64(exists))
+	return writer.WriteInteger(int64(exists))
 }
 
 // handleTTL 处理 TTL 命令
-func (h *RedisHandler) handleTTL(command []string, res transport.Writer) error {
+func (h *RedisHandler) handleTTL(command []string, writer *resp.RespWriter) error {
 	if len(command) != 2 {
-		return h.writeRESPError(res, "ERR wrong number of arguments for 'ttl' command")
+		return writer.WriteWrongNumberOfArgumentsError("TTL")
 	}
 
 	key := command[1]
 	ttl, _ := h.ttl(key)
-	return h.writeRESPInteger(res, ttl)
+	return writer.WriteInteger(ttl)
 }
 
 // get 获取键值
@@ -332,42 +301,103 @@ func (h *RedisHandler) ttl(key string) (int64, error) {
 	return int64(ttl), nil
 }
 
-// RESP 协议写入方法
-
-// writeRESPError 写入 RESP 错误响应
-func (h *RedisHandler) writeRESPError(res transport.Writer, message string) error {
-	response := fmt.Sprintf("-%s\r\n", message)
-	_, err := res.Write([]byte(response))
-	return err
+// handleHELLO handles the HELLO command for protocol version negotiation
+// HELLO [protover [AUTH username password] [SETNAME clientname]]
+func (h *RedisHandler) handleHELLO(command []string, writer *resp.RespWriter) error {
+	// Default to current protocol version if not specified
+	protocolVersion := h.protocolVersion
+	
+	// Parse protocol version if provided
+	if len(command) >= 2 {
+		ver, err := strconv.Atoi(command[1])
+		if err != nil {
+			return writer.WriteErrorString("ERR", "Protocol version is not an integer or out of range")
+		}
+		
+		// Only support versions 2 and 3
+		if ver != 2 && ver != 3 {
+			return writer.WriteErrorString("ERR", "HELLO only supports RESP protocol versions 2 and 3")
+		}
+		
+		protocolVersion = ver
+	}
+	
+	// Update handler's protocol version
+	h.protocolVersion = protocolVersion
+	
+	// Create response map
+	responseMap := make(map[string]interface{})
+	responseMap["server"] = "spine-go"
+	responseMap["version"] = "1.0.0"
+	responseMap["proto"] = protocolVersion
+	responseMap["id"] = 0 // Server ID
+	responseMap["mode"] = "standalone"
+	responseMap["role"] = "master"
+	responseMap["modules"] = []interface{}{}
+	
+	// If using RESP v3, return as a map
+	if protocolVersion == 3 {
+		// Convert to RESP v3 map
+		mapItems := make([]resp.MapItem, 0, len(responseMap))
+		
+		for k, v := range responseMap {
+			var value resp.Value
+			switch val := v.(type) {
+			case string:
+				value = resp.NewBulkStringString(val)
+			case int:
+				value = resp.NewInteger(int64(val))
+			case []interface{}:
+				// Convert array
+				arrayValues := make([]resp.Value, len(val))
+				for i, item := range val {
+					switch arrItem := item.(type) {
+					case string:
+						arrayValues[i] = resp.NewBulkStringString(arrItem)
+					case int:
+						arrayValues[i] = resp.NewInteger(int64(arrItem))
+					default:
+						arrayValues[i] = resp.NewNull()
+					}
+				}
+				value = resp.NewArray(arrayValues)
+			default:
+				value = resp.NewNull()
+			}
+			
+			mapItems = append(mapItems, resp.MapItem{
+				Key:   resp.NewBulkStringString(k),
+				Value: value,
+			})
+		}
+		
+		return writer.WriteValue(resp.NewMap(mapItems))
+	}
+	
+	// For RESP v2, return as an array of bulk strings
+	responseArray := make([]resp.Value, 0, len(responseMap)*2)
+	
+	// Add each key-value pair as consecutive elements
+	for k, v := range responseMap {
+		responseArray = append(responseArray, resp.NewBulkStringString(k))
+		
+		switch val := v.(type) {
+		case string:
+			responseArray = append(responseArray, resp.NewBulkStringString(val))
+		case int:
+			responseArray = append(responseArray, resp.NewBulkStringString(strconv.Itoa(val)))
+		case []interface{}:
+			// For empty array, add empty bulk string
+			responseArray = append(responseArray, resp.NewBulkStringString(""))
+		default:
+			responseArray = append(responseArray, resp.NewBulkStringString(""))
+		}
+	}
+	
+	return writer.WriteValue(resp.NewArray(responseArray))
 }
 
-// writeRESPSimpleString 写入 RESP 简单字符串
-func (h *RedisHandler) writeRESPSimpleString(res transport.Writer, message string) error {
-	response := fmt.Sprintf("+%s\r\n", message)
-	_, err := res.Write([]byte(response))
-	return err
-}
-
-// writeRESPBulkString 写入 RESP 批量字符串
-func (h *RedisHandler) writeRESPBulkString(res transport.Writer, message string) error {
-	response := fmt.Sprintf("$%d\r\n%s\r\n", len(message), message)
-	_, err := res.Write([]byte(response))
-	return err
-}
-
-// writeRESPNull 写入 RESP 空值
-func (h *RedisHandler) writeRESPNull(res transport.Writer) error {
-	response := "$-1\r\n"
-	_, err := res.Write([]byte(response))
-	return err
-}
-
-// writeRESPInteger 写入 RESP 整数
-func (h *RedisHandler) writeRESPInteger(res transport.Writer, value int64) error {
-	response := fmt.Sprintf(":%d\r\n", value)
-	_, err := res.Write([]byte(response))
-	return err
-}
+// 不再需要 RESP 协议写入方法，使用 resp.RespWriter 代替
 
 // Close 关闭内存数据库连接
 func (h *RedisHandler) Close() error {

@@ -282,23 +282,27 @@ type NamedPipeReader struct {
 }
 
 func (r *NamedPipeReader) Read(p []byte) (n int, err error) {
+	// 检查连接是否已关闭
 	select {
 	case <-r.quitChan:
 		return 0, fmt.Errorf("connection closed")
 	default:
 	}
 
-	// 创建重叠结构用于异步I/O
-	overlapped := &windows.Overlapped{}
+	// 创建事件用于异步操作
 	event, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create event: %v", err)
+		return 0, fmt.Errorf("CreateEvent failed: %v", err)
 	}
 	defer windows.CloseHandle(event)
-	overlapped.HEvent = event
 
-	// 启动异步读取
+	// 创建重叠结构
+	overlapped := &windows.Overlapped{
+		HEvent: event,
+	}
+
 	var bytesRead uint32
+	// 启动异步读取
 	err = windows.ReadFile(r.conn.handle, p, &bytesRead, overlapped)
 	if err != nil && err != windows.ERROR_IO_PENDING {
 		return 0, fmt.Errorf("ReadFile failed: %v", err)
@@ -309,30 +313,53 @@ func (r *NamedPipeReader) Read(p []byte) (n int, err error) {
 		return int(bytesRead), nil
 	}
 
-	// 等待异步操作完成或退出信号
-	for {
-		select {
-		case <-r.quitChan:
-			// 取消异步操作
-			windows.CancelIo(r.conn.handle)
-			return 0, fmt.Errorf("connection closed")
-		default:
-			// 检查异步操作是否完成
-			wait, err := windows.WaitForSingleObject(event, 100) // 100ms 超时
-			if err != nil {
-				return 0, fmt.Errorf("WaitForSingleObject failed: %v", err)
-			}
-			
-			if wait == windows.WAIT_OBJECT_0 {
-				// 操作完成，获取结果
-				err = windows.GetOverlappedResult(r.conn.handle, overlapped, &bytesRead, false)
-				if err != nil {
-					return 0, fmt.Errorf("GetOverlappedResult failed: %v", err)
-				}
-				return int(bytesRead), nil
-			}
-			// 如果超时，继续循环检查
+	// 使用 goroutine 和 channel 来处理异步等待
+	resultChan := make(chan struct {
+		n   int
+		err error
+	}, 1)
+
+	go func() {
+		// 等待读取完成
+		wait, err := windows.WaitForSingleObject(event, windows.INFINITE)
+		if err != nil {
+			resultChan <- struct {
+				n   int
+				err error
+			}{0, fmt.Errorf("WaitForSingleObject failed: %v", err)}
+			return
 		}
+
+		if wait == windows.WAIT_OBJECT_0 {
+			// 操作完成，获取结果
+			err = windows.GetOverlappedResult(r.conn.handle, overlapped, &bytesRead, false)
+			if err != nil {
+				resultChan <- struct {
+					n   int
+					err error
+				}{0, fmt.Errorf("GetOverlappedResult failed: %v", err)}
+				return
+			}
+			resultChan <- struct {
+				n   int
+				err error
+			}{int(bytesRead), nil}
+		} else {
+			resultChan <- struct {
+				n   int
+				err error
+			}{0, fmt.Errorf("WaitForSingleObject returned unexpected value: %d", wait)}
+		}
+	}()
+
+	// 等待读取完成或退出信号
+	select {
+	case result := <-resultChan:
+		return result.n, result.err
+	case <-r.quitChan:
+		// 取消异步操作
+		windows.CancelIo(r.conn.handle)
+		return 0, fmt.Errorf("connection closed")
 	}
 }
 
