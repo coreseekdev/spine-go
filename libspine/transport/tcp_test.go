@@ -152,9 +152,13 @@ func TestTransportRoundTrip(t *testing.T) {
 			return
 		}
 
-		// 验证响应
-		if string(response[:n]) != `{"status":"success"}` {
-			errChan <- fmt.Errorf("expected response 'success', got %s", string(response[:n]))
+		// 验证响应（去掉换行符）
+		responseStr := string(response[:n])
+		if responseStr[len(responseStr)-1] == '\n' {
+			responseStr = responseStr[:len(responseStr)-1]
+		}
+		if responseStr != `{"status":"success"}` {
+			errChan <- fmt.Errorf("expected response '{\"status\":\"success\"}', got %s", responseStr)
 			return
 		}
 
@@ -166,10 +170,12 @@ func TestTransportRoundTrip(t *testing.T) {
 	writer := &TCPWriter{Conn: server}
 
 	// 读取客户端数据
-	data, err := reader.Read()
+	buffer := make([]byte, 1024)
+	n, err := reader.Read(buffer)
 	if err != nil {
 		t.Fatalf("Failed to read data: %v", err)
 	}
+	data := buffer[:n]
 
 	// 验证数据
 	if string(data) != "Hello, World!" {
@@ -178,7 +184,7 @@ func TestTransportRoundTrip(t *testing.T) {
 
 	// 发送响应
 	response := []byte(`{"status":"success"}`)
-	err = writer.Write(response)
+	_, err = writer.Write(response)
 	if err != nil {
 		t.Fatalf("Failed to write response: %v", err)
 	}

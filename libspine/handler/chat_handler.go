@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"spine-go/libspine/transport"
 	"sync"
@@ -74,7 +75,8 @@ func (h *ChatHandler) Handle(ctx *transport.Context, req transport.Reader, res t
 	// 持续处理消息直到连接关闭
 	for {
 		// 读取原始数据
-		data, err := req.Read()
+		buffer := make([]byte, 4096)
+		n, err := req.Read(buffer)
 		if err != nil {
 			// 连接关闭或读取错误，清理连接并退出
 			if ctx.ConnInfo != nil {
@@ -83,8 +85,13 @@ func (h *ChatHandler) Handle(ctx *transport.Context, req transport.Reader, res t
 				h.connectionsMu.Unlock()
 				log.Printf("Connection %s closed, removed from active connections", ctx.ConnInfo.ID)
 			}
+			// 如果是 EOF，表示正常结束，不返回错误
+			if err == io.EOF {
+				return nil
+			}
 			return err
 		}
+		data := buffer[:n]
 
 		// 解析请求
 		var chatReq ChatRequest
@@ -116,7 +123,6 @@ func (h *ChatHandler) Handle(ctx *transport.Context, req transport.Reader, res t
 			handleErr = h.writeError(res, "Method not allowed", 405)
 		}
 
-		// 如果处理请求时出错，记录但不关闭连接
 		if handleErr != nil {
 			log.Printf("Error handling request: %v", handleErr)
 		}
@@ -163,13 +169,14 @@ func (h *ChatHandler) handlePostMessage(ctx *transport.Context, req transport.Re
 	})
 }
 
-// handleGetMessages 处理获取消息
+// handleGetMessages 处理获取消息 - 返回最新的广播消息
 func (h *ChatHandler) handleGetMessages(ctx *transport.Context, req transport.Reader, res transport.Writer, chatReq *ChatRequest) error {
 	h.mu.RLock()
 	messages := make([]*ChatMessage, len(h.messages))
 	copy(messages, h.messages)
 	h.mu.RUnlock()
 
+	// 返回所有消息
 	return h.writeSuccess(res, messages)
 }
 
@@ -235,17 +242,20 @@ func (h *ChatHandler) broadcastToAll(ctx *transport.Context, msg *ChatMessage) {
 		return
 	}
 	log.Printf("broadcastToAll: Broadcasting JSON message: %s", string(data))
-	// 直接使用 JSON 文本而不是二进制格式
 
 	// 向所有活跃连接广播消息
 	for _, connID := range activeConnIDs {
 		if connInfo, exists := ctx.ConnectionManager.GetConnection(connID); exists {
 			if connInfo.Writer != nil {
-				if err := connInfo.Writer.Write(data); err != nil {
+				// 立即写入并刷新，确保消息被发送
+				if _, err := connInfo.Writer.Write(data); err != nil {
+					log.Printf("broadcastToAll: Failed to write to connection %s: %v", connID, err)
 					// 如果写入失败，从活跃连接中移除该连接
 					h.connectionsMu.Lock()
 					delete(h.activeConns, connID)
 					h.connectionsMu.Unlock()
+				} else {
+					log.Printf("broadcastToAll: Successfully sent message to connection %s", connID)
 				}
 			}
 		}
@@ -254,7 +264,6 @@ func (h *ChatHandler) broadcastToAll(ctx *transport.Context, msg *ChatMessage) {
 	// 向 WebSocket 客户端广播
 	if h.wsTransport != nil {
 		if wsTransport, ok := h.wsTransport.(interface{ Broadcast([]byte) error }); ok {
-			// 直接使用 JSON 文本而不是二进制格式
 			wsTransport.Broadcast(data)
 		}
 	}
@@ -274,7 +283,8 @@ func (h *ChatHandler) writeSuccess(res transport.Writer, data interface{}) error
 
 	// 直接发送 JSON 文本而不是二进制格式
 	log.Printf("writeSuccess: Sending JSON response: %s", string(respData))
-	return res.Write(respData)
+	_, err = res.Write(respData)
+	return err
 }
 
 // writeError 写入错误响应
@@ -287,12 +297,14 @@ func (h *ChatHandler) writeError(res transport.Writer, message string, status in
 	respData, err := json.Marshal(response)
 	if err != nil {
 		log.Printf("writeError: Error marshaling response: %v", err)
-		return res.Write([]byte(`{"error":"Internal server error"}`)) 
+		_, err := res.Write([]byte(`{"error":"Internal server error"}`))
+		return err 
 	}
 
 	// 直接发送 JSON 文本而不是二进制格式
 	log.Printf("writeError: Sending JSON error response: %s", string(respData))
-	return res.Write(respData)
+	_, err = res.Write(respData)
+	return err
 }
 
 // createBinaryMessage 方法已删除，因为我们现在使用纯文本 JSON

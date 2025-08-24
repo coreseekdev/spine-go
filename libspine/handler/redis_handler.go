@@ -48,10 +48,12 @@ func NewRedisHandler(addr string, password string, db int) *RedisHandler {
 // Handle 处理 Redis 请求
 func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res transport.Writer) error {
 	// 读取原始数据
-	data, err := req.Read()
+	buffer := make([]byte, 4096)
+	n, err := req.Read(buffer)
 	if err != nil {
 		return h.writeError(res, "Failed to read request", 400)
 	}
+	data := buffer[:n]
 
 	// 解析请求
 	var redisReq RedisRequest
@@ -97,7 +99,8 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 	}
 
 	binaryData := h.createBinaryMessage(respData)
-	return res.Write(binaryData)
+	_, err = res.Write(binaryData)
+	return err
 }
 
 // writeSuccess 写入成功响应
@@ -113,7 +116,8 @@ func (h *RedisHandler) writeSuccess(res transport.Writer, data interface{}) erro
 	}
 
 	binaryData := h.createBinaryMessage(respData)
-	return res.Write(binaryData)
+	_, err = res.Write(binaryData)
+	return err
 }
 
 // writeError 写入错误响应
@@ -125,11 +129,13 @@ func (h *RedisHandler) writeError(res transport.Writer, message string, status i
 
 	respData, err := json.Marshal(response)
 	if err != nil {
-		return res.Write([]byte(`{"error":"Internal server error"}`))
+		_, err := res.Write([]byte(`{"error":"Internal server error"}`))
+		return err
 	}
 
 	binaryData := h.createBinaryMessage(respData)
-	return res.Write(binaryData)
+	_, err = res.Write(binaryData)
+	return err
 }
 
 // createBinaryMessage 创建二进制消息格式

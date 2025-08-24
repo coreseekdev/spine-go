@@ -2,7 +2,9 @@ package transport
 
 import (
 	"context"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -179,13 +181,38 @@ func (w *WebSocketTransport) GetConnections() int {
 
 // WebSocketReader WebSocket 读取器
 type WebSocketReader struct {
-	conn *websocket.Conn
+	conn       *websocket.Conn
+	reader     io.Reader // 当前消息的 reader
+	messageType int      // 当前消息类型
 }
 
-// Read 读取原始数据
-func (r *WebSocketReader) Read() ([]byte, error) {
-	_, data, err := r.conn.ReadMessage()
-	return data, err
+// Read 读取数据到提供的缓冲区中，符合 io.Reader 接口
+func (r *WebSocketReader) Read(p []byte) (n int, err error) {
+	// 如果没有当前 reader，获取下一个消息的 reader
+	if r.reader == nil {
+		r.messageType, r.reader, err = r.conn.NextReader()
+		if err != nil {
+			return 0, err
+		}
+	}
+	
+	// 从当前 reader 读取数据
+	n, err = r.reader.Read(p)
+	
+	// 如果遇到 EOF，说明当前消息读取完毕，清空 reader 准备读取下一个消息
+	if err == io.EOF {
+		r.reader = nil
+		// 对于 WebSocket，消息结束的 EOF 不应该传播给上层
+		// 上层应该继续调用 Read 来获取下一个消息
+		if n == 0 {
+			// 如果没有读取到数据且遇到 EOF，递归调用读取下一个消息
+			return r.Read(p)
+		}
+		// 如果读取到了数据，返回数据但不返回 EOF 错误
+		err = nil
+	}
+	
+	return n, err
 }
 
 // Close 关闭读取器
@@ -201,10 +228,14 @@ type WebSocketWriter struct {
 	conn *websocket.Conn
 }
 
-// Write 写入原始数据
-func (w *WebSocketWriter) Write(data []byte) error {
-	log.Printf("WebSocketWriter.Write: Sending message type: %d, data: %s", websocket.TextMessage, string(data))
-	return w.conn.WriteMessage(websocket.TextMessage, data)
+// Write 写入数据，符合 io.Writer 接口
+func (w *WebSocketWriter) Write(p []byte) (n int, err error) {
+	log.Printf("WebSocketWriter.Write: Sending message type: %d, data: %s", websocket.TextMessage, string(p))
+	err = w.conn.WriteMessage(websocket.TextMessage, p)
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 // Close 关闭写入器
@@ -218,6 +249,13 @@ func (w *WebSocketWriter) Close() error {
 // generateConnID 生成连接ID
 func generateConnID() string {
 	return "ws_" + generateID()
+}
+
+// NewHandlers 创建 WebSocket 读写器（为了兼容测试接口）
+func (w *WebSocketTransport) NewHandlers(conn net.Conn) (Reader, Writer) {
+	// WebSocket 不能直接从 net.Conn 创建，返回 nil
+	// 实际的 WebSocket 连接通过 HTTP 升级创建
+	return nil, nil
 }
 
 // isNetworkError 判断是否为网络相关的常见错误

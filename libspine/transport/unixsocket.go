@@ -152,14 +152,9 @@ type UnixSocketReader struct {
 	Conn net.Conn
 }
 
-// Read 读取原始数据
-func (r *UnixSocketReader) Read() ([]byte, error) {
-	buffer := make([]byte, 1024)
-	n, err := r.Conn.Read(buffer)
-	if err != nil {
-		return nil, err
-	}
-	return buffer[:n], nil
+// Read 读取数据到提供的缓冲区中，符合 io.Reader 接口
+func (r *UnixSocketReader) Read(p []byte) (n int, err error) {
+	return r.Conn.Read(p)
 }
 
 // Close 关闭读取器
@@ -175,10 +170,9 @@ type UnixSocketWriter struct {
 	Conn net.Conn
 }
 
-// Write 写入原始数据
-func (w *UnixSocketWriter) Write(data []byte) error {
-	_, err := w.Conn.Write(data)
-	return err
+// Write 写入数据，符合 io.Writer 接口
+func (w *UnixSocketWriter) Write(p []byte) (n int, err error) {
+	return w.Conn.Write(p)
 }
 
 // Close 关闭写入器

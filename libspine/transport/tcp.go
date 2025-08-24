@@ -160,14 +160,9 @@ type TCPReader struct {
 	quitChan <-chan struct{}
 }
 
-// Read 读取原始数据
-func (r *TCPReader) Read() ([]byte, error) {
-	buffer := make([]byte, 1024)
-	n, err := r.Conn.Read(buffer)
-	if err != nil {
-		return nil, err
-	}
-	return buffer[:n], nil
+// Read 读取数据到提供的缓冲区中，符合 io.Reader 接口
+func (r *TCPReader) Read(p []byte) (n int, err error) {
+	return r.Conn.Read(p)
 }
 
 // Close 关闭读取器
@@ -183,15 +178,16 @@ type TCPWriter struct {
 	Conn net.Conn
 }
 
-// Write 写入原始数据
-func (w *TCPWriter) Write(data []byte) error {
+// Write 写入数据，符合 io.Writer 接口
+func (w *TCPWriter) Write(p []byte) (n int, err error) {
 	// 确保数据以换行符结尾，这样客户端可以正确读取
+	data := p
 	if len(data) > 0 && data[len(data)-1] != '\n' {
 		data = append(data, '\n')
 	}
-	_, err := w.Conn.Write(data)
+	n, err = w.Conn.Write(data)
 	if err != nil {
-		return err
+		return n, err
 	}
 	
 	// 立即刷新数据，确保广播消息能及时发送
@@ -199,7 +195,7 @@ func (w *TCPWriter) Write(data []byte) error {
 		tcpConn.SetNoDelay(true)
 	}
 	
-	return nil
+	return n, nil
 }
 
 // Close 关闭写入器

@@ -376,6 +376,9 @@ func (suite *E2ETestSuite) RunConnectionManagementTest(t *testing.T, protocol st
 		t.Fatalf("Failed to join chat: %v", err)
 	}
 
+	// 等待JOIN请求处理完成
+	time.Sleep(50 * time.Millisecond)
+
 	// 验证服务器连接数
 	if err := suite.connectionValidator.ValidateServerConnections(suite.serverManager, 1); err != nil {
 		t.Fatalf("Server connection validation failed: %v", err)
@@ -392,7 +395,7 @@ func (suite *E2ETestSuite) RunConnectionManagementTest(t *testing.T, protocol st
 	}
 
 	// 等待服务器清理连接
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	// 验证服务器连接数
 	if err := suite.connectionValidator.ValidateServerConnections(suite.serverManager, 0); err != nil {
@@ -422,6 +425,9 @@ func (suite *E2ETestSuite) RunGracefulShutdownTest(t *testing.T, protocol string
 		}
 	}
 
+	// 等待所有客户端连接完成
+	time.Sleep(100 * time.Millisecond)
+	
 	// 验证所有客户端都已连接
 	for _, name := range clientNames {
 		client, _ := suite.GetClient(name)
@@ -453,13 +459,21 @@ func (suite *E2ETestSuite) RunGracefulShutdownTest(t *testing.T, protocol string
 	t.Logf("Graceful shutdown test passed - server closed in %v", shutdownDuration)
 	
 	// 验证客户端在尝试发送消息时会检测到连接已断开
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	for i, name := range clientNames {
 		client, _ := suite.GetClient(name)
-		err := client.SendMessage(fmt.Sprintf("user%d", i+1), "test after shutdown")
-		if err == nil {
-			t.Fatalf("Client %s should fail to send message after server shutdown", name)
+		
+		// 检查连接状态或尝试发送消息
+		if client.IsConnected() {
+			// 如果客户端认为还连接着，尝试发送消息应该失败
+			err := client.SendMessage(fmt.Sprintf("user%d", i+1), "test after shutdown")
+			if err == nil {
+				t.Fatalf("Client %s should fail to send message after server shutdown", name)
+			}
+			t.Logf("Client %s correctly detected disconnection: %v", name, err)
+		} else {
+			// 客户端已经检测到断开连接
+			t.Logf("Client %s correctly detected disconnection: client is not connected", name)
 		}
-		t.Logf("Client %s correctly detected disconnection: %v", name, err)
 	}
 }

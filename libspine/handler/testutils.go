@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"net"
+	"io"
 	"spine-go/libspine/transport"
 	"strings"
 	"testing"
@@ -49,13 +49,14 @@ func NewMockReaderFromRequests(requests []*transport.Request) *MockReader {
 	}
 }
 
-func (m *MockReader) Read() ([]byte, error) {
+func (m *MockReader) Read(p []byte) (n int, err error) {
 	if m.current >= len(m.data) {
-		return nil, net.ErrClosed
+		return 0, io.EOF
 	}
 	data := m.data[m.current]
 	m.current++
-	return data, nil
+	n = copy(p, data)
+	return n, nil
 }
 
 func (m *MockReader) Close() error {
@@ -74,10 +75,10 @@ func NewMockWriter() *MockWriter {
 	}
 }
 
-func (m *MockWriter) Write(data []byte) error {
+func (m *MockWriter) Write(data []byte) (n int, err error) {
 	m.responses = append(m.responses, data)
-	m.buffer.Write(data)
-	return nil
+	n, err = m.buffer.Write(data)
+	return n, err
 }
 
 func (m *MockWriter) Close() error {
@@ -102,7 +103,13 @@ func (m *MockWriter) GetLastResponseAsMap() map[string]interface{} {
 	
 	data := m.responses[len(m.responses)-1]
 	
-	// 解析二进制格式 [4字节长度] + [数据]
+	// 首先尝试直接解析 JSON 数据
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err == nil {
+		return result
+	}
+	
+	// 如果直接解析失败，尝试解析二进制格式 [4字节长度] + [数据]
 	if len(data) < 4 {
 		return nil
 	}
@@ -113,7 +120,6 @@ func (m *MockWriter) GetLastResponseAsMap() map[string]interface{} {
 	}
 	
 	jsonData := data[4 : 4+length]
-	var result map[string]interface{}
 	if err := json.Unmarshal(jsonData, &result); err != nil {
 		return nil
 	}

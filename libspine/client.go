@@ -80,15 +80,17 @@ func (c *Client) SendRequest(method, path string, body []byte) (*transport.Respo
 	}
 
 	// 发送原始数据
-	if err := c.writer.Write(requestData); err != nil {
+	if _, err := c.writer.Write(requestData); err != nil {
 		return nil, err
 	}
 
 	// 读取响应
-	responseData, err := c.reader.Read()
+	buffer := make([]byte, 4096)
+	n, err := c.reader.Read(buffer)
 	if err != nil {
 		return nil, err
 	}
+	responseData := buffer[:n]
 
 	// 解析响应
 	var response transport.Response

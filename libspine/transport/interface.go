@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"fmt"
 	"net"
 	"sync"
 )
@@ -16,94 +15,9 @@ type ConnectionManager interface {
 	CloseAllConnections() error
 }
 
-// connectionManager 连接管理器的具体实现，管理所有传输层的连接
-type connectionManager struct {
-	connections map[string]*ConnInfo
-	mu          sync.RWMutex
-}
-
 // NewConnectionManager 创建新的连接管理器
 func NewConnectionManager() ConnectionManager {
-	return &connectionManager{
-		connections: make(map[string]*ConnInfo),
-	}
-}
-
-// AddConnection 添加连接
-func (cm *connectionManager) AddConnection(conn *ConnInfo) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	cm.connections[conn.ID] = conn
-}
-
-// RemoveConnection 移除连接
-func (cm *connectionManager) RemoveConnection(connID string) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	delete(cm.connections, connID)
-}
-
-// GetConnection 获取连接信息
-func (cm *connectionManager) GetConnection(connID string) (*ConnInfo, bool) {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
-	conn, exists := cm.connections[connID]
-	return conn, exists
-}
-
-// GetAllConnections 获取所有连接
-func (cm *connectionManager) GetAllConnections() []*ConnInfo {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
-	conns := make([]*ConnInfo, 0, len(cm.connections))
-	for _, conn := range cm.connections {
-		conns = append(conns, conn)
-	}
-	return conns
-}
-
-// GetStats 获取连接统计信息
-func (cm *connectionManager) GetStats() map[string]interface{} {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
-	stats := map[string]interface{}{
-		"total": len(cm.connections),
-	}
-	return stats
-}
-
-// CloseAllConnections 关闭所有连接
-func (cm *connectionManager) CloseAllConnections() error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	var errs []error
-	for connID, conn := range cm.connections {
-		// 关闭Reader和Writer
-		if conn.Reader != nil {
-			if err := conn.Reader.Close(); err != nil {
-				errs = append(errs, fmt.Errorf("failed to close reader for connection %s: %v", connID, err))
-			}
-		}
-		if conn.Writer != nil {
-			if err := conn.Writer.Close(); err != nil {
-				errs = append(errs, fmt.Errorf("failed to close writer for connection %s: %v", connID, err))
-			}
-		}
-	}
-
-	// 清空连接映射
-	cm.connections = make(map[string]*ConnInfo)
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors closing connections: %v", errs)
-	}
-	return nil
+	return newConnectionManager()
 }
 
 // ServerContext 统一的服务器上下文，管理所有传输层的共享状态
@@ -195,15 +109,21 @@ type Response struct {
 	Body   []byte
 }
 
-// Reader 用于读取请求数据
+// Reader 用于读取请求数据，兼容 io.Reader 接口
 type Reader interface {
-	Read() ([]byte, error)
+	// Read 读取数据到提供的缓冲区中
+	// 返回读取的字节数和可能的错误
+	// 符合 io.Reader 接口规范
+	Read(p []byte) (n int, err error)
 	Close() error
 }
 
-// Writer 用于写入响应数据
+// Writer 用于写入响应数据，兼容 io.Writer 接口
 type Writer interface {
-	Write([]byte) error
+	// Write 将数据写入到底层数据流
+	// 返回写入的字节数和可能的错误
+	// 符合 io.Writer 接口规范
+	Write(p []byte) (n int, err error)
 	Close() error
 }
 

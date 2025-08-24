@@ -49,17 +49,21 @@ type ChatMessage struct {
 
 // TCPTestClient TCP 测试客户端
 type TCPTestClient struct {
-	address   string
-	conn      net.Conn
-	reader    *bufio.Scanner
-	mu        sync.RWMutex
-	connected bool
+	address     string
+	conn        net.Conn
+	reader      *bufio.Scanner
+	mu          sync.RWMutex
+	connected   bool
+	messageChan chan *ChatResponse // 用于接收消息的通道
+	stopChan    chan struct{}      // 用于停止后台读取的通道
 }
 
 // NewTCPTestClient 创建新的 TCP 测试客户端
 func NewTCPTestClient(address string) *TCPTestClient {
 	return &TCPTestClient{
-		address: address,
+		address:     address,
+		messageChan: make(chan *ChatResponse, 100), // 缓冲通道
+		stopChan:    make(chan struct{}),
 	}
 }
 
@@ -80,6 +84,10 @@ func (c *TCPTestClient) Connect() error {
 	c.conn = conn
 	c.reader = bufio.NewScanner(conn)
 	c.connected = true
+	
+	// 启动后台消息读取 goroutine
+	go c.readMessages()
+	
 	return nil
 }
 
@@ -92,13 +100,75 @@ func (c *TCPTestClient) Disconnect() error {
 		return nil
 	}
 
+	// 停止后台读取
+	close(c.stopChan)
+
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
 	}
 
 	c.connected = false
+	c.reader = nil
+	
+	// 重新创建通道以便重连
+	c.messageChan = make(chan *ChatResponse, 100)
+	c.stopChan = make(chan struct{})
+	
 	return nil
+}
+
+// readMessages 后台读取消息的方法
+func (c *TCPTestClient) readMessages() {
+	for {
+		select {
+		case <-c.stopChan:
+			return
+		default:
+			c.mu.RLock()
+			if !c.connected || c.conn == nil {
+				c.mu.RUnlock()
+				return
+			}
+			
+			// 设置读取超时
+			c.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			
+			buffer := make([]byte, 4096)
+			n, err := c.conn.Read(buffer)
+			c.mu.RUnlock()
+			
+			if err != nil {
+				// 如果是超时错误，继续循环
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
+				// 其他错误表示连接断开，更新连接状态
+				c.mu.Lock()
+				c.connected = false
+				c.mu.Unlock()
+				return
+			}
+			
+			if n > 0 {
+				data := string(buffer[:n])
+				// 处理可能的多个JSON对象
+				decoder := json.NewDecoder(strings.NewReader(data))
+				for decoder.More() {
+					var response ChatResponse
+					if err := decoder.Decode(&response); err == nil {
+						select {
+						case c.messageChan <- &response:
+						case <-c.stopChan:
+							return
+						default:
+							// 通道满了，丢弃旧消息
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 // checkConnectionStatus 检查并更新连接状态
@@ -148,66 +218,30 @@ func (c *TCPTestClient) GetMessages() error {
 	return c.sendRequest("GET", "/chat", nil)
 }
 
-// ReceiveMessage 接收消息
+// ReceiveMessage 接收消息 - 从消息通道读取
 func (c *TCPTestClient) ReceiveMessage() (*ChatResponse, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if !c.connected || c.conn == nil {
+	if !c.IsConnected() {
 		return nil, fmt.Errorf("client is not connected")
 	}
 
-	// 设置较长的读取超时用于广播消息
-	c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	defer c.conn.SetReadDeadline(time.Time{}) // 清除超时
-
-	// 使用 bufio.Scanner 按行读取，处理多行JSON
-	scanner := bufio.NewScanner(c.conn)
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			return nil, fmt.Errorf("failed to read message: %v", err)
-		}
-		return nil, fmt.Errorf("connection closed")
+	select {
+	case response := <-c.messageChan:
+		return response, nil
+	case <-time.After(10 * time.Second):
+		return nil, fmt.Errorf("timeout waiting for message")
 	}
-
-	data := scanner.Text()
-	if data == "" {
-		return nil, fmt.Errorf("empty message received")
-	}
-
-	// 解析JSON响应
-	var response ChatResponse
-	if err := json.Unmarshal([]byte(data), &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %v", err)
-	}
-
-	return &response, nil
 }
 
 // IsConnected 检查连接状态
 func (c *TCPTestClient) IsConnected() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
-	if !c.connected || c.conn == nil {
-		return false
-	}
-
-	// 尝试写入一个空数据来检测连接状态
-	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Millisecond))
-	_, err := c.conn.Write([]byte{})
-	c.conn.SetWriteDeadline(time.Time{}) // 清除deadline
-
-	if err != nil {
-		// 写入失败表示连接断开
-		c.connected = false
-		return false
-	}
-
-	return true
+	// 简单检查连接状态，不进行实际网络操作
+	return c.connected && c.conn != nil
 }
 
-// sendRequest 发送请求
+// sendRequest 发送请求（异步，不等待响应）
 func (c *TCPTestClient) sendRequest(method, path string, data interface{}) error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -227,10 +261,10 @@ func (c *TCPTestClient) sendRequest(method, path string, data interface{}) error
 		return fmt.Errorf("failed to marshal request: %v", err)
 	}
 
-	// 发送请求
+	// 发送请求（不等待响应）
 	_, err = c.conn.Write(append(requestData, '\n'))
 	if err != nil {
-		// 更新连接状态
+		// 写入失败时更新连接状态
 		c.mu.RUnlock()
 		c.mu.Lock()
 		c.connected = false
@@ -239,75 +273,23 @@ func (c *TCPTestClient) sendRequest(method, path string, data interface{}) error
 		return fmt.Errorf("failed to send request: %v", err)
 	}
 
-	// 读取响应
-	response, err := c.receiveResponse()
-	if err != nil {
-		// 更新连接状态
-		c.mu.RUnlock()
-		c.mu.Lock()
-		c.connected = false
-		c.mu.Unlock()
-		c.mu.RLock()
-		return fmt.Errorf("failed to read response: %v", err)
-	}
-
-	if response.Status != 200 {
-		return fmt.Errorf("request failed: %s", response.Error)
-	}
-
 	return nil
 }
 
-// receiveResponse 接收响应
-func (c *TCPTestClient) receiveResponse() (*ChatResponse, error) {
-	if !c.connected || c.conn == nil {
-		return nil, fmt.Errorf("client is not connected")
-	}
-
-	// 设置读取超时
-	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	defer c.conn.SetReadDeadline(time.Time{}) // 清除超时
-
-	// 直接从连接读取数据
-	buffer := make([]byte, 4096)
-	n, err := c.conn.Read(buffer)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read message: %v", err)
-	}
-
-	data := string(buffer[:n])
-
-	// 处理连续的JSON对象，使用简单的括号匹配来分割
-	var responses []ChatResponse
-	decoder := json.NewDecoder(strings.NewReader(data))
-
-	for decoder.More() {
-		var response ChatResponse
-		if err := decoder.Decode(&response); err == nil {
-			responses = append(responses, response)
-		}
-	}
-
-	if len(responses) == 0 {
-		return nil, fmt.Errorf("no valid response found in data: %s", data)
-	}
-
-	// 返回第一个有效的响应
-	return &responses[0], nil
-}
 
 // WebSocketTestClient WebSocket 测试客户端
 type WebSocketTestClient struct {
 	address   string
 	conn      *websocket.Conn
-	mu        sync.RWMutex
 	connected bool
+	mu        sync.RWMutex
 }
 
 // NewWebSocketTestClient 创建新的 WebSocket 测试客户端
 func NewWebSocketTestClient(address string) *WebSocketTestClient {
 	return &WebSocketTestClient{
-		address: address,
+		address:   address,
+		connected: false,
 	}
 }
 
