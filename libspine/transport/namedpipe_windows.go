@@ -5,7 +5,6 @@ package transport
 import (
 	"fmt"
 	"log"
-	"net"
 	"sync"
 	"time"
 
@@ -77,6 +76,8 @@ func (t *NamedPipeTransport) Stop() error {
 }
 
 // acceptConnections 接受连接
+// Named Pipe 的特性：每个管道实例只能服务一个客户端
+// 为了支持多客户端，我们需要为每个连接创建新的管道实例
 func (t *NamedPipeTransport) acceptConnections() {
 	defer t.wg.Done()
 
@@ -85,17 +86,24 @@ func (t *NamedPipeTransport) acceptConnections() {
 		case <-t.quitChan:
 			return
 		default:
-			// 创建命名管道
-			pipeHandle, err := t.createNamedPipe()
+			// 为每个潜在的客户端连接创建新的管道实例
+			// 使用相同的管道名称但不同的实例
+			pipeHandle, err := t.createNamedPipeInstance()
 			if err != nil {
 				if t.running {
 					log.Printf("Named Pipe create error: %v", err)
 				}
-				return
+				// 如果创建失败，稍等后重试
+				select {
+				case <-t.quitChan:
+					return
+				case <-time.After(100 * time.Millisecond):
+					continue
+				}
 			}
 
-			// 等待客户端连接
-			err = t.connectNamedPipe(pipeHandle)
+			// 等待客户端连接到这个管道实例
+			err = t.waitForClientConnection(pipeHandle)
 			if err != nil {
 				windows.CloseHandle(pipeHandle)
 				if t.running {
@@ -104,14 +112,17 @@ func (t *NamedPipeTransport) acceptConnections() {
 				continue
 			}
 
+			// 成功连接后，启动处理协程
+			// 同时继续循环创建新的管道实例等待下一个客户端
 			t.wg.Add(1)
 			go t.handleConnection(pipeHandle)
 		}
 	}
 }
 
-// createNamedPipe 创建命名管道
-func (t *NamedPipeTransport) createNamedPipe() (windows.Handle, error) {
+// createNamedPipeInstance 创建命名管道实例
+// 每次调用都会创建一个新的管道实例，支持多客户端连接
+func (t *NamedPipeTransport) createNamedPipeInstance() (windows.Handle, error) {
 	pipeName, err := windows.UTF16PtrFromString(t.pipeName)
 	if err != nil {
 		return windows.InvalidHandle, err
@@ -119,7 +130,7 @@ func (t *NamedPipeTransport) createNamedPipe() (windows.Handle, error) {
 
 	handle, err := windows.CreateNamedPipe(
 		pipeName,
-		windows.PIPE_ACCESS_DUPLEX,
+		windows.PIPE_ACCESS_DUPLEX|windows.FILE_FLAG_OVERLAPPED,
 		windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT,
 		windows.PIPE_UNLIMITED_INSTANCES,
 		4096, // 输出缓冲区大小
@@ -135,9 +146,65 @@ func (t *NamedPipeTransport) createNamedPipe() (windows.Handle, error) {
 	return handle, nil
 }
 
-// connectNamedPipe 等待客户端连接
-func (t *NamedPipeTransport) connectNamedPipe(handle windows.Handle) error {
-	return windows.ConnectNamedPipe(handle, nil)
+// waitForClientConnection 等待客户端连接到管道实例
+// 使用重叠 I/O 实现可中断的连接等待
+func (t *NamedPipeTransport) waitForClientConnection(handle windows.Handle) error {
+	// 创建事件对象用于重叠 I/O
+	event, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create event: %v", err)
+	}
+	defer windows.CloseHandle(event)
+
+	// 创建重叠结构
+	overlapped := &windows.Overlapped{
+		HEvent: event,
+	}
+
+	// 尝试异步连接
+	err = windows.ConnectNamedPipe(handle, overlapped)
+	if err != nil {
+		if err == windows.ERROR_PIPE_CONNECTED {
+			// 客户端已经连接
+			return nil
+		}
+		if err != windows.ERROR_IO_PENDING {
+			// 其他错误
+			return fmt.Errorf("ConnectNamedPipe failed: %v", err)
+		}
+		// ERROR_IO_PENDING 表示操作正在进行中，这是预期的
+	}
+
+	// 等待连接完成或服务器停止
+	for {
+		select {
+		case <-t.quitChan:
+			// 服务器正在停止，取消操作
+			windows.CancelIo(handle)
+			return fmt.Errorf("server stopping")
+		default:
+			// 检查操作是否完成
+			waitResult, err := windows.WaitForSingleObject(event, 100) // 100ms 超时
+			if err != nil {
+				return fmt.Errorf("WaitForSingleObject failed: %v", err)
+			}
+			
+			if waitResult == windows.WAIT_OBJECT_0 {
+				// 操作完成
+				var bytesTransferred uint32
+				err = windows.GetOverlappedResult(handle, overlapped, &bytesTransferred, false)
+				if err != nil {
+					return fmt.Errorf("GetOverlappedResult failed: %v", err)
+				}
+				return nil
+			} else if waitResult == uint32(windows.WAIT_TIMEOUT) {
+				// 超时，继续循环检查
+				continue
+			} else {
+				return fmt.Errorf("unexpected wait result: %d", waitResult)
+			}
+		}
+	}
 }
 
 // handleConnection 处理连接
@@ -221,12 +288,52 @@ func (r *NamedPipeReader) Read(p []byte) (n int, err error) {
 	default:
 	}
 
-	var bytesRead uint32
-	err = windows.ReadFile(r.conn.handle, p, &bytesRead, nil)
+	// 创建重叠结构用于异步I/O
+	overlapped := &windows.Overlapped{}
+	event, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to create event: %v", err)
 	}
-	return int(bytesRead), nil
+	defer windows.CloseHandle(event)
+	overlapped.HEvent = event
+
+	// 启动异步读取
+	var bytesRead uint32
+	err = windows.ReadFile(r.conn.handle, p, &bytesRead, overlapped)
+	if err != nil && err != windows.ERROR_IO_PENDING {
+		return 0, fmt.Errorf("ReadFile failed: %v", err)
+	}
+
+	// 如果立即完成，直接返回
+	if err == nil {
+		return int(bytesRead), nil
+	}
+
+	// 等待异步操作完成或退出信号
+	for {
+		select {
+		case <-r.quitChan:
+			// 取消异步操作
+			windows.CancelIo(r.conn.handle)
+			return 0, fmt.Errorf("connection closed")
+		default:
+			// 检查异步操作是否完成
+			wait, err := windows.WaitForSingleObject(event, 100) // 100ms 超时
+			if err != nil {
+				return 0, fmt.Errorf("WaitForSingleObject failed: %v", err)
+			}
+			
+			if wait == windows.WAIT_OBJECT_0 {
+				// 操作完成，获取结果
+				err = windows.GetOverlappedResult(r.conn.handle, overlapped, &bytesRead, false)
+				if err != nil {
+					return 0, fmt.Errorf("GetOverlappedResult failed: %v", err)
+				}
+				return int(bytesRead), nil
+			}
+			// 如果超时，继续循环检查
+		}
+	}
 }
 
 func (r *NamedPipeReader) Close() error {
@@ -239,12 +346,48 @@ type NamedPipeWriter struct {
 }
 
 func (w *NamedPipeWriter) Write(p []byte) (n int, err error) {
-	var bytesWritten uint32
-	err = windows.WriteFile(w.conn.handle, p, &bytesWritten, nil)
+	// 创建重叠结构用于异步I/O
+	overlapped := &windows.Overlapped{}
+	event, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to create event: %v", err)
 	}
-	return int(bytesWritten), nil
+	defer windows.CloseHandle(event)
+	overlapped.HEvent = event
+
+	// 启动异步写入
+	var bytesWritten uint32
+	err = windows.WriteFile(w.conn.handle, p, &bytesWritten, overlapped)
+	if err != nil && err != windows.ERROR_IO_PENDING {
+		return 0, fmt.Errorf("WriteFile failed: %v", err)
+	}
+
+	// 如果立即完成，直接返回
+	if err == nil {
+		return int(bytesWritten), nil
+	}
+
+	// 等待异步操作完成
+	wait, err := windows.WaitForSingleObject(event, 5000) // 5秒超时
+	if err != nil {
+		return 0, fmt.Errorf("WaitForSingleObject failed: %v", err)
+	}
+	
+	if wait == 0x00000102 { // WAIT_TIMEOUT
+		windows.CancelIo(w.conn.handle)
+		return 0, fmt.Errorf("write timeout")
+	}
+	
+	if wait == windows.WAIT_OBJECT_0 {
+		// 操作完成，获取结果
+		err = windows.GetOverlappedResult(w.conn.handle, overlapped, &bytesWritten, false)
+		if err != nil {
+			return 0, fmt.Errorf("GetOverlappedResult failed: %v", err)
+		}
+		return int(bytesWritten), nil
+	}
+	
+	return 0, fmt.Errorf("unexpected wait result: %d", wait)
 }
 
 func (w *NamedPipeWriter) Close() error {

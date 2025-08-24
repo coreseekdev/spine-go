@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -351,6 +352,60 @@ func TestWebSocketServerGracefulShutdown(t *testing.T) {
 	suite.RunGracefulShutdownTest(t, "http")
 }
 
+// TestUnixSocketBasicChat 测试 Unix Socket 基本聊天功能（仅在 Unix 系统上运行）
+func TestUnixSocketBasicChat(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket is not supported on Windows")
+	}
+	suite := NewE2ETestSuite()
+	suite.RunBasicChatTest(t, "unix")
+}
+
+// TestUnixSocketMultiClientBroadcast 测试 Unix Socket 多客户端广播（仅在 Unix 系统上运行）
+func TestUnixSocketMultiClientBroadcast(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket is not supported on Windows")
+	}
+	suite := NewE2ETestSuite()
+	suite.RunMultiClientBroadcastTest(t, "unix")
+}
+
+// TestNamedPipeBasicChat 测试 Named Pipe 基本聊天功能（仅在 Windows 上运行）
+func TestNamedPipeBasicChat(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Named pipe is only supported on Windows")
+	}
+	suite := NewE2ETestSuite()
+	suite.RunBasicChatTest(t, "namedpipe")
+}
+
+// TestNamedPipeMultiClientBroadcast 测试 Named Pipe 多客户端广播（仅在 Windows 上运行）
+func TestNamedPipeMultiClientBroadcast(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Named pipe is only supported on Windows")
+	}
+	suite := NewE2ETestSuite()
+	suite.RunMultiClientBroadcastTest(t, "namedpipe")
+}
+
+// TestNamedPipeConcurrentConnections 测试 Named Pipe 并发连接（仅在 Windows 上运行）
+func TestNamedPipeConcurrentConnections(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Named pipe is only supported on Windows")
+	}
+	suite := NewE2ETestSuite()
+	suite.RunNamedPipeConcurrentConnectionsTest(t)
+}
+
+// TestNamedPipeConnectionManagement 测试 Named Pipe 连接管理（仅在 Windows 上运行）
+func TestNamedPipeConnectionManagement(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Named pipe is only supported on Windows")
+	}
+	suite := NewE2ETestSuite()
+	suite.RunConnectionManagementTest(t, "namedpipe")
+}
+
 // RunConnectionManagementTest 运行连接管理测试
 func (suite *E2ETestSuite) RunConnectionManagementTest(t *testing.T, protocol string) {
 	// 设置测试环境
@@ -476,4 +531,112 @@ func (suite *E2ETestSuite) RunGracefulShutdownTest(t *testing.T, protocol string
 			t.Logf("Client %s correctly detected disconnection: client is not connected", name)
 		}
 	}
+}
+
+// RunNamedPipeConcurrentConnectionsTest 运行 Named Pipe 并发连接测试
+func (suite *E2ETestSuite) RunNamedPipeConcurrentConnectionsTest(t *testing.T) {
+	// 设置测试环境
+	if err := suite.SetupTest([]string{"namedpipe"}); err != nil {
+		t.Fatalf("Failed to setup test: %v", err)
+	}
+	defer suite.TeardownTest()
+
+	// 测试大量并发连接
+	clientCount := 10
+	clientNames := make([]string, clientCount)
+	for i := 0; i < clientCount; i++ {
+		clientNames[i] = fmt.Sprintf("client%d", i+1)
+	}
+
+	// 并发创建和连接客户端
+	var wg sync.WaitGroup
+	errorChan := make(chan error, clientCount)
+
+	for _, name := range clientNames {
+		wg.Add(1)
+		go func(clientName string) {
+			defer wg.Done()
+			if err := suite.CreateClient(clientName, "namedpipe"); err != nil {
+				errorChan <- fmt.Errorf("failed to create client %s: %v", clientName, err)
+				return
+			}
+			
+			client, _ := suite.GetClient(clientName)
+			if err := client.JoinChat(); err != nil {
+				errorChan <- fmt.Errorf("failed to join chat for %s: %v", clientName, err)
+				return
+			}
+		}(name)
+	}
+
+	// 等待所有客户端连接完成
+	wg.Wait()
+	close(errorChan)
+
+	// 检查是否有错误
+	for err := range errorChan {
+		if err != nil {
+			t.Fatalf("Concurrent connection error: %v", err)
+		}
+	}
+
+	// 等待连接稳定
+	time.Sleep(200 * time.Millisecond)
+
+	// 验证所有客户端都已连接
+	for _, name := range clientNames {
+		client, _ := suite.GetClient(name)
+		if err := suite.connectionValidator.ValidateConnection(client, true); err != nil {
+			t.Fatalf("Connection validation failed for %s: %v", name, err)
+		}
+	}
+
+	// 验证服务器连接数
+	if err := suite.connectionValidator.ValidateServerConnections(suite.serverManager, clientCount); err != nil {
+			t.Fatalf("Server connection validation failed: %v", err)
+		}
+
+	// 测试并发消息发送
+	messageCount := 5
+	var messageWg sync.WaitGroup
+	messageErrorChan := make(chan error, clientCount*messageCount)
+
+	for i, name := range clientNames {
+		messageWg.Add(1)
+		go func(clientIndex int, clientName string) {
+			defer messageWg.Done()
+			client, _ := suite.GetClient(clientName)
+			
+			for j := 0; j < messageCount; j++ {
+				message := fmt.Sprintf("concurrent message %d from %s", j+1, clientName)
+				if err := client.SendMessage(fmt.Sprintf("user%d", clientIndex+1), message); err != nil {
+					messageErrorChan <- fmt.Errorf("failed to send message from %s: %v", clientName, err)
+					return
+				}
+				// 短暂延迟避免过快发送
+				time.Sleep(10 * time.Millisecond)
+			}
+		}(i, name)
+	}
+
+	// 等待所有消息发送完成
+	messageWg.Wait()
+	close(messageErrorChan)
+
+	// 检查消息发送是否有错误
+	for err := range messageErrorChan {
+		if err != nil {
+			t.Fatalf("Concurrent message sending error: %v", err)
+		}
+	}
+
+	// 验证所有客户端仍然连接
+	for _, name := range clientNames {
+		client, _ := suite.GetClient(name)
+		if err := suite.connectionValidator.ValidateConnection(client, true); err != nil {
+			t.Fatalf("Connection validation after messaging failed for %s: %v", name, err)
+		}
+	}
+
+	t.Logf("Named Pipe concurrent connections test passed with %d clients", clientCount)
 }

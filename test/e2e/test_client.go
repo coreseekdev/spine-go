@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -592,7 +593,219 @@ func (f *TestClientFactory) CreateClient(protocol, address string) (TestClient, 
 		return NewWebSocketTestClient(address), nil
 	case "unix":
 		return NewUnixSocketTestClient(address), nil
+	case "namedpipe":
+		return NewNamedPipeTestClient(address), nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %s", protocol)
+	}
+}
+
+// NamedPipeTestClient Named Pipe 测试客户端
+type NamedPipeTestClient struct {
+	pipeName    string
+	conn        interface{} // 在 Windows 上是 windows.Handle，其他平台为 nil
+	reader      *bufio.Scanner
+	mu          sync.RWMutex
+	connected   bool
+	messageChan chan *ChatResponse
+	stopChan    chan struct{}
+}
+
+// NewNamedPipeTestClient 创建新的 Named Pipe 测试客户端
+func NewNamedPipeTestClient(pipeName string) *NamedPipeTestClient {
+	// 确保管道名称格式正确
+	if runtime.GOOS == "windows" && len(pipeName) > 0 && pipeName[0] != '\\' {
+		pipeName = `\\.\pipe\` + pipeName
+	}
+	
+	return &NamedPipeTestClient{
+		pipeName:    pipeName,
+		messageChan: make(chan *ChatResponse, 100),
+		stopChan:    make(chan struct{}),
+	}
+}
+
+// Connect 连接到服务器
+func (c *NamedPipeTestClient) Connect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.connected {
+		return fmt.Errorf("client is already connected")
+	}
+
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("named pipe is only supported on Windows")
+	}
+
+	// 在 Windows 上连接到 named pipe
+	err := c.connectWindows()
+	if err != nil {
+		return fmt.Errorf("failed to connect to %s: %v", c.pipeName, err)
+	}
+
+	c.connected = true
+	
+	// 启动后台消息读取 goroutine
+	go c.readMessages()
+	
+	return nil
+}
+
+// Disconnect 断开连接
+func (c *NamedPipeTestClient) Disconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.connected {
+		return nil
+	}
+
+	// 停止后台读取
+	close(c.stopChan)
+
+	if c.conn != nil {
+		c.closeConnection()
+		c.conn = nil
+	}
+
+	c.connected = false
+	c.reader = nil
+	
+	// 重新创建通道以便重连
+	c.messageChan = make(chan *ChatResponse, 100)
+	c.stopChan = make(chan struct{})
+	
+	return nil
+}
+
+// SendMessage 发送聊天消息
+func (c *NamedPipeTestClient) SendMessage(user, message string) error {
+	if !c.IsConnected() {
+		return fmt.Errorf("client is not connected")
+	}
+	return c.sendRequest("POST", "/chat", map[string]interface{}{
+		"user":    user,
+		"message": message,
+	})
+}
+
+// JoinChat 加入聊天
+func (c *NamedPipeTestClient) JoinChat() error {
+	return c.sendRequest("JOIN", "/chat", nil)
+}
+
+// LeaveChat 离开聊天
+func (c *NamedPipeTestClient) LeaveChat() error {
+	return c.sendRequest("LEAVE", "/chat", nil)
+}
+
+// GetMessages 获取消息
+func (c *NamedPipeTestClient) GetMessages() error {
+	return c.sendRequest("GET", "/chat", nil)
+}
+
+// ReceiveMessage 接收消息
+func (c *NamedPipeTestClient) ReceiveMessage() (*ChatResponse, error) {
+	if !c.IsConnected() {
+		return nil, fmt.Errorf("client is not connected")
+	}
+
+	select {
+	case response := <-c.messageChan:
+		return response, nil
+	case <-time.After(10 * time.Second):
+		return nil, fmt.Errorf("timeout waiting for message")
+	}
+}
+
+// IsConnected 检查连接状态
+func (c *NamedPipeTestClient) IsConnected() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.connected && c.conn != nil
+}
+
+// sendRequest 发送请求
+func (c *NamedPipeTestClient) sendRequest(method, path string, data interface{}) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if !c.connected || c.conn == nil {
+		return fmt.Errorf("client is not connected")
+	}
+
+	request := ChatRequest{
+		Method: method,
+		Path:   path,
+		Data:   data,
+	}
+
+	requestData, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %v", err)
+	}
+
+	// 发送请求
+	err = c.writeData(append(requestData, '\n'))
+	if err != nil {
+		// 写入失败时更新连接状态
+		c.mu.RUnlock()
+		c.mu.Lock()
+		c.connected = false
+		c.mu.Unlock()
+		c.mu.RLock()
+		return fmt.Errorf("failed to send request: %v", err)
+	}
+
+	return nil
+}
+
+// readMessages 后台读取消息的方法
+func (c *NamedPipeTestClient) readMessages() {
+	for {
+		select {
+		case <-c.stopChan:
+			return
+		default:
+			c.mu.RLock()
+			if !c.connected || c.conn == nil {
+				c.mu.RUnlock()
+				return
+			}
+			
+			buffer := make([]byte, 4096)
+			n, err := c.readData(buffer)
+			c.mu.RUnlock()
+			
+			if err != nil {
+				// 读取错误表示连接断开
+				c.mu.Lock()
+				c.connected = false
+				c.mu.Unlock()
+				return
+			}
+			
+			if n > 0 {
+				data := string(buffer[:n])
+				// 处理可能的多个JSON对象
+				decoder := json.NewDecoder(strings.NewReader(data))
+				for decoder.More() {
+					var response ChatResponse
+					if err := decoder.Decode(&response); err == nil {
+						select {
+						case c.messageChan <- &response:
+						case <-c.stopChan:
+							return
+						default:
+							// 通道满了，丢弃旧消息
+						}
+					}
+				}
+			}
+			
+			// 短暂休眠避免过度占用CPU
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 }
