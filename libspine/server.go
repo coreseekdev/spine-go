@@ -111,6 +111,20 @@ func (s *Server) startTransport(config ListenConfig, _ string, staticPath string
 		log.Printf("Unix socket transport starting on %s", address)
 		return transportInstance.Start(s.serverCtx)
 
+	case "namedpipe":
+		address = config.Path
+		transportInstance, err = transport.NewNamedPipeTransport(address)
+		if err != nil {
+			return err
+		}
+
+		s.mu.Lock()
+		s.transports = append(s.transports, transportInstance)
+		s.mu.Unlock()
+
+		log.Printf("Named pipe transport starting on %s", address)
+		return transportInstance.Start(s.serverCtx)
+
 	case "http":
 		address := config.Host + ":" + config.Port
 		if config.Path != "" {
