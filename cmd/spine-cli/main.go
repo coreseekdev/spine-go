@@ -262,16 +262,29 @@ func sendRedisRequest(conn net.Conn, request RedisRequest) {
 }
 
 func sendRequest(conn net.Conn, request transport.Request) {
-	// 发送请求
-	requestStr := fmt.Sprintf("%s %s\n", request.Method, request.Path)
-	if len(request.Body) > 0 {
-		requestStr += fmt.Sprintf("Content-Length: %d\n\n", len(request.Body))
-		requestStr += string(request.Body)
-	} else {
-		requestStr += "\n"
+	// 将请求对象序列化为 JSON
+	chatReq := struct {
+		Method string          `json:"method"`
+		Path   string          `json:"path"`
+		Data   json.RawMessage `json:"data"`
+	}{
+		Method: request.Method,
+		Path:   request.Path,
+		Data:   request.Body,
 	}
 
-	_, err := conn.Write([]byte(requestStr))
+	// 序列化为 JSON
+	jsonData, err := json.Marshal(chatReq)
+	if err != nil {
+		log.Printf("Failed to marshal request to JSON: %v", err)
+		return
+	}
+
+	// 添加换行符以支持 JSONL 协议
+	jsonData = append(jsonData, '\n')
+
+	// 发送 JSON 数据
+	_, err = conn.Write(jsonData)
 	if err != nil {
 		log.Printf("Failed to send request: %v", err)
 	}
