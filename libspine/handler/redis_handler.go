@@ -1,11 +1,12 @@
 package handler
 
 import (
-	"context"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"path/filepath"
+	"strconv"
 
 	"spine-go/libspine/engine"
 	"spine-go/libspine/engine/commands"
@@ -53,13 +54,22 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 		}
 	}
 
-	// 创建 RESP 读取器
-	respReader := resp.NewRESPReader(req)
+	// 创建 RESP 请求读取器
+	reqReader := resp.NewReqReader(req)
+
+	// 初始化Metadata如果不存在
+	if ctx.ConnInfo.Metadata == nil {
+		ctx.ConnInfo.Metadata = make(map[string]interface{})
+	}
+
+	// 在连接的Metadata中存储选择的数据库编号
+	var defaultDB int = 0 // 默认使用数据库0
+	ctx.ConnInfo.Metadata[transport.MetadataSelectedDB] = defaultDB
 
 	// 持续处理消息直到连接关闭
 	for {
-		// 解析 RESP 命令
-		command, args, err := respReader.ReadCommand()
+		// 获取命令名称和参数数量（一次性解析）
+		command, nargs, err := reqReader.ParseCommand()
 		if err != nil {
 			// 连接关闭或读取错误
 			if err == io.EOF {
@@ -72,17 +82,82 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 			continue
 		}
 
-		log.Printf("Received Redis command: %s %v", command, args)
+		log.Printf("Received Redis command: %s (args: %d)", command, nargs)
 
-		// 使用engine处理命令
-		ctxWithCancel := context.Background()
-		if err := h.engine.ExecuteCommand(ctxWithCancel, command, args, req, res); err != nil {
-			log.Printf("Error executing command: %v", err)
-			// 写入错误响应
+		// 处理特殊命令，如 SELECT
+		if command == "SELECT" && nargs == 1 {
+			// 获取参数解析器
+			valueReader, err := reqReader.NextReader()
+			if err != nil {
+				respWriter := resp.NewRESPWriter(res)
+				respWriter.WriteError(fmt.Sprintf("ERR %v", err))
+				continue
+			}
+
+			// 读取数据库编号
+			dbStr, err := valueReader.ReadBulkString()
+			if err != nil {
+				respWriter := resp.NewRESPWriter(res)
+				respWriter.WriteError(fmt.Sprintf("ERR %v", err))
+				continue
+			}
+
+			// 解析数据库编号
+			dbNum, err := strconv.Atoi(dbStr)
+			if err != nil {
+				respWriter := resp.NewRESPWriter(res)
+				respWriter.WriteError(fmt.Sprintf("ERR invalid DB index: %s", dbStr))
+				continue
+			}
+
+			// 验证数据库编号范围（Redis默认支持0-15）
+			if dbNum < 0 || dbNum > 15 {
+				respWriter := resp.NewRESPWriter(res)
+				respWriter.WriteError(fmt.Sprintf("ERR invalid DB index: %d", dbNum))
+				continue
+			}
+
+			// 初始化Metadata如果不存在
+			if ctx.ConnInfo.Metadata == nil {
+				ctx.ConnInfo.Metadata = make(map[string]interface{})
+			}
+
+			// 在连接的Metadata中存储选择的数据库编号
+			ctx.ConnInfo.Metadata[transport.MetadataSelectedDB] = dbNum
+
+			// 返回成功响应
 			respWriter := resp.NewRESPWriter(res)
-			respWriter.WriteError(fmt.Sprintf("ERR %v", err))
+			respWriter.WriteSimpleString("OK")
+			continue
+		}
+
+		// 计算命令哈希值
+		cmdHash := hashString(command)
+
+		// 创建RESP响应写入器
+		respWriter := resp.NewRESPWriter(res)
+
+		// 直接传递 transport.Context、命令哈希、命令名称、reqReader 和 respWriter 到 ExecuteCommand
+		if err := h.engine.ExecuteCommand(ctx, cmdHash, command, reqReader, respWriter); err != nil {
+			log.Printf("Error executing command: %v", err)
+
+			// 检查是否为未知命令错误
+			if engine.IsUnknownCommandError(err) {
+				// 对于未知命令错误，返回特定的错误消息
+				respWriter.WriteError(fmt.Sprintf("ERR unknown command '%s'", command))
+			} else {
+				// 其他错误类型
+				respWriter.WriteError(fmt.Sprintf("ERR %v", err))
+			}
 		}
 	}
+}
+
+// hashString 计算字符串的32位FNV-1a哈希值
+func hashString(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
 }
 
 // Close 关闭Redis处理器

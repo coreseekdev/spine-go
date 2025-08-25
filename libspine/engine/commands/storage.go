@@ -59,49 +59,80 @@ func RegisterStorageCommands(registry *engine.CommandRegistry) error {
 type SetCommand struct{}
 
 func (c *SetCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) < 2 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'set' command")
+	valueReader, err := ctx.ReqReader.NextReader()
+	if err != nil || valueReader == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'set' command")
 	}
 
-	key := ctx.Args[0]
-	value := ctx.Args[1]
+	key, err := valueReader.ReadBulkString()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid key")
+	}
+
+	valueReader, err = ctx.ReqReader.NextReader()
+	if err != nil || valueReader == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'set' command")
+	}
+
+	value, err := valueReader.ReadBulkString()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid value")
+	}
 	var expiration *time.Time
 
 	// Parse optional arguments (EX, PX, EXAT, PXAT, NX, XX)
-	for i := 2; i < len(ctx.Args); i += 2 {
-		if i+1 >= len(ctx.Args) {
-			return writeRESP3Error(ctx.Writer, "ERR syntax error")
+	for {
+		optionReader, err := ctx.ReqReader.NextReader()
+		if err != nil || optionReader == nil {
+			break
 		}
 
-		option := strings.ToUpper(ctx.Args[i])
-		arg := ctx.Args[i+1]
+		option, err := optionReader.ReadBulkString()
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR syntax error")
+		}
+
+		option = strings.ToUpper(option)
+
+		argReader, err := ctx.ReqReader.NextReader()
+		if err != nil || argReader == nil {
+			return ctx.RespWriter.WriteError("ERR syntax error")
+		}
 
 		switch option {
 		case "EX": // seconds
+			arg, err := argReader.ReadBulkString()
+			if err != nil {
+				return ctx.RespWriter.WriteError("ERR invalid argument")
+			}
 			seconds, err := strconv.ParseInt(arg, 10, 64)
 			if err != nil || seconds <= 0 {
-				return writeRESP3Error(ctx.Writer, "ERR invalid expire time in set")
+				return ctx.RespWriter.WriteError("ERR invalid expire time in set")
 			}
 			exp := time.Now().Add(time.Duration(seconds) * time.Second)
 			expiration = &exp
 		case "PX": // milliseconds
+			arg, err := argReader.ReadBulkString()
+			if err != nil {
+				return ctx.RespWriter.WriteError("ERR invalid argument")
+			}
 			milliseconds, err := strconv.ParseInt(arg, 10, 64)
 			if err != nil || milliseconds <= 0 {
-				return writeRESP3Error(ctx.Writer, "ERR invalid expire time in set")
+				return ctx.RespWriter.WriteError("ERR invalid expire time in set")
 			}
 			exp := time.Now().Add(time.Duration(milliseconds) * time.Millisecond)
 			expiration = &exp
 		default:
-			return writeRESP3Error(ctx.Writer, "ERR syntax error")
+			return ctx.RespWriter.WriteError("ERR syntax error")
 		}
 	}
 
-	err := ctx.Database.Set(key, value, expiration)
+	err = ctx.Database.Set(key, value, expiration)
 	if err != nil {
-		return writeRESP3Error(ctx.Writer, fmt.Sprintf("ERR %s", err.Error()))
+		return ctx.RespWriter.WriteError(fmt.Sprintf("ERR %s", err.Error()))
 	}
 
-	return writeRESP3SimpleString(ctx.Writer, "OK")
+	return ctx.RespWriter.WriteSimpleString("OK")
 }
 
 func (c *SetCommand) GetInfo() *engine.CommandInfo {
@@ -125,17 +156,21 @@ func (c *SetCommand) ModifiesData() bool {
 type GetCommand struct{}
 
 func (c *GetCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) != 1 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'get' command")
+	valueReader, err := ctx.ReqReader.NextReader()
+	if err != nil || valueReader == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'get' command")
 	}
 
-	key := ctx.Args[0]
+	key, err := valueReader.ReadBulkString()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid key")
+	}
 	value, exists := ctx.Database.Get(key)
 	if !exists {
-		return writeRESP3Null(ctx.Writer)
+		return ctx.RespWriter.WriteNull()
 	}
 
-	return writeRESP3BulkString(ctx.Writer, value)
+	return ctx.RespWriter.WriteBulkString(value)
 }
 
 func (c *GetCommand) GetInfo() *engine.CommandInfo {
@@ -159,12 +194,25 @@ func (c *GetCommand) ModifiesData() bool {
 type DelCommand struct{}
 
 func (c *DelCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) == 0 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'del' command")
+	var keys []string
+	for {
+		valueReader, err := ctx.ReqReader.NextReader()
+		if err != nil || valueReader == nil {
+			break
+		}
+		key, err := valueReader.ReadBulkString()
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR invalid key")
+		}
+		keys = append(keys, key)
 	}
 
-	count := ctx.Database.Del(ctx.Args...)
-	return writeRESP3Integer(ctx.Writer, int64(count))
+	if len(keys) == 0 {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'del' command")
+	}
+
+	count := ctx.Database.Del(keys...)
+	return ctx.RespWriter.WriteInteger(int64(count))
 }
 
 func (c *DelCommand) GetInfo() *engine.CommandInfo {
@@ -188,12 +236,25 @@ func (c *DelCommand) ModifiesData() bool {
 type ExistsCommand struct{}
 
 func (c *ExistsCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) == 0 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'exists' command")
+	var keys []string
+	for {
+		valueReader, err := ctx.ReqReader.NextReader()
+		if err != nil || valueReader == nil {
+			break
+		}
+		key, err := valueReader.ReadBulkString()
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR invalid key")
+		}
+		keys = append(keys, key)
 	}
 
-	count := ctx.Database.Exists(ctx.Args...)
-	return writeRESP3Integer(ctx.Writer, int64(count))
+	if len(keys) == 0 {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'exists' command")
+	}
+
+	count := ctx.Database.Exists(keys...)
+	return ctx.RespWriter.WriteInteger(int64(count))
 }
 
 func (c *ExistsCommand) GetInfo() *engine.CommandInfo {
@@ -217,14 +278,18 @@ func (c *ExistsCommand) ModifiesData() bool {
 type TypeCommand struct{}
 
 func (c *TypeCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) != 1 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'type' command")
+	valueReader, err := ctx.ReqReader.NextReader()
+	if err != nil || valueReader == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'type' command")
 	}
 
-	key := ctx.Args[0]
+	key, err := valueReader.ReadBulkString()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid key")
+	}
 	valueType, exists := ctx.Database.Type(key)
 	if !exists {
-		return writeRESP3SimpleString(ctx.Writer, "none")
+		return ctx.RespWriter.WriteSimpleString("none")
 	}
 
 	var typeStr string
@@ -245,7 +310,7 @@ func (c *TypeCommand) Execute(ctx *engine.CommandContext) error {
 		typeStr = "unknown"
 	}
 
-	return writeRESP3SimpleString(ctx.Writer, typeStr)
+	return ctx.RespWriter.WriteSimpleString( typeStr)
 }
 
 func (c *TypeCommand) GetInfo() *engine.CommandInfo {
@@ -269,23 +334,38 @@ func (c *TypeCommand) ModifiesData() bool {
 type ExpireCommand struct{}
 
 func (c *ExpireCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) != 2 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'expire' command")
+	keyReader, err := ctx.ReqReader.NextReader()
+	if err != nil || keyReader == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'expire' command")
 	}
 
-	key := ctx.Args[0]
-	seconds, err := strconv.ParseInt(ctx.Args[1], 10, 64)
+	key, err := keyReader.ReadBulkString()
 	if err != nil {
-		return writeRESP3Error(ctx.Writer, "ERR value is not an integer or out of range")
+		return ctx.RespWriter.WriteError("ERR invalid key")
+	}
+
+	secondsReader, err := ctx.ReqReader.NextReader()
+	if err != nil || secondsReader == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'expire' command")
+	}
+
+	secondsStr, err := secondsReader.ReadBulkString()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid seconds value")
+	}
+
+	seconds, err := strconv.ParseInt(secondsStr, 10, 64)
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR value is not an integer or out of range")
 	}
 
 	expiration := time.Now().Add(time.Duration(seconds) * time.Second)
 	success := ctx.Database.Expire(key, expiration)
 
 	if success {
-		return writeRESP3Integer(ctx.Writer, 1)
+		return ctx.RespWriter.WriteInteger(1)
 	}
-	return writeRESP3Integer(ctx.Writer, 0)
+	return ctx.RespWriter.WriteInteger(0)
 }
 
 func (c *ExpireCommand) GetInfo() *engine.CommandInfo {
@@ -309,21 +389,25 @@ func (c *ExpireCommand) ModifiesData() bool {
 type TTLCommand struct{}
 
 func (c *TTLCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) != 1 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'ttl' command")
+	valueReader, err := ctx.ReqReader.NextReader()
+	if err != nil || valueReader == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'ttl' command")
 	}
 
-	key := ctx.Args[0]
+	key, err := valueReader.ReadBulkString()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid key")
+	}
 	ttl, exists := ctx.Database.TTL(key)
 	if !exists {
-		return writeRESP3Integer(ctx.Writer, -2) // Key doesn't exist
+		return ctx.RespWriter.WriteInteger(-2) // Key doesn't exist
 	}
 
 	if ttl == -1 {
-		return writeRESP3Integer(ctx.Writer, -1) // No expiration
+		return ctx.RespWriter.WriteInteger(-1) // No expiration
 	}
 
-	return writeRESP3Integer(ctx.Writer, int64(ttl.Seconds()))
+	return ctx.RespWriter.WriteInteger(int64(ttl.Seconds()))
 }
 
 func (c *TTLCommand) GetInfo() *engine.CommandInfo {
@@ -347,14 +431,24 @@ func (c *TTLCommand) ModifiesData() bool {
 type KeysCommand struct{}
 
 func (c *KeysCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) != 1 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'keys' command")
+	valueReader, err := ctx.ReqReader.NextReader()
+	if err != nil || valueReader == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'keys' command")
 	}
 
-	pattern := ctx.Args[0]
+	pattern, err := valueReader.ReadBulkString()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid pattern")
+	}
 	keys := ctx.Database.Keys(pattern)
 
-	return writeRESP3Array(ctx.Writer, keys)
+	// Convert []string to []interface{}
+	keysInterface := make([]interface{}, len(keys))
+	for i, k := range keys {
+		keysInterface[i] = k
+	}
+
+	return ctx.RespWriter.WriteArray(keysInterface)
 }
 
 func (c *KeysCommand) GetInfo() *engine.CommandInfo {
@@ -379,7 +473,7 @@ type FlushDBCommand struct{}
 
 func (c *FlushDBCommand) Execute(ctx *engine.CommandContext) error {
 	ctx.Database.FlushDB()
-	return writeRESP3SimpleString(ctx.Writer, "OK")
+	return ctx.RespWriter.WriteSimpleString("OK")
 }
 
 func (c *FlushDBCommand) GetInfo() *engine.CommandInfo {
@@ -404,7 +498,7 @@ type DBSizeCommand struct{}
 
 func (c *DBSizeCommand) Execute(ctx *engine.CommandContext) error {
 	size := ctx.Database.DBSize()
-	return writeRESP3Integer(ctx.Writer, int64(size))
+	return ctx.RespWriter.WriteInteger(int64(size))
 }
 
 func (c *DBSizeCommand) GetInfo() *engine.CommandInfo {

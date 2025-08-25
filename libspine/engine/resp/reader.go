@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"spine-go/libspine/transport"
 )
@@ -22,40 +21,28 @@ func NewRESPReader(reader transport.Reader) *RESPReader {
 	}
 }
 
-// ReadCommand reads and parses a Redis command
-func (r *RESPReader) ReadCommand() (string, []string, error) {
-	value, err := r.ReadValue()
+// ReadBulkString reads a bulk string directly (helper method)
+func (r *RESPReader) ReadBulkString() (string, error) {
+	line, err := r.readLine()
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 
-	// Command should be an array
-	arr, ok := value.([]interface{})
+	if len(line) == 0 || line[0] != '$' {
+		return "", fmt.Errorf("expected bulk string, got %s", line)
+	}
+
+	val, err := r.readBulkString(line[1:])
+	if err != nil {
+		return "", err
+	}
+
+	str, ok := val.(string)
 	if !ok {
-		return "", nil, fmt.Errorf("expected array for command")
+		return "", fmt.Errorf("expected string, got %T", val)
 	}
 
-	if len(arr) == 0 {
-		return "", nil, fmt.Errorf("empty command array")
-	}
-
-	// First element is the command
-	cmd, ok := arr[0].(string)
-	if !ok {
-		return "", nil, fmt.Errorf("command must be a string")
-	}
-
-	// Rest are arguments
-	args := make([]string, len(arr)-1)
-	for i := 1; i < len(arr); i++ {
-		arg, ok := arr[i].(string)
-		if !ok {
-			return "", nil, fmt.Errorf("argument %d must be a string", i)
-		}
-		args[i-1] = arg
-	}
-
-	return strings.ToUpper(cmd), args, nil
+	return str, nil
 }
 
 // ReadValue reads a single RESP value

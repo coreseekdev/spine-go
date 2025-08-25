@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"spine-go/libspine/engine/resp"
 	"spine-go/libspine/engine/storage"
 	"spine-go/libspine/engine/wal"
 	"spine-go/libspine/transport"
@@ -12,11 +13,11 @@ import (
 
 // Engine represents the main database engine
 type Engine struct {
-	mu       sync.RWMutex
-	storages map[int]*storage.Database // database instances indexed by db number
-	wal      *wal.WAL                  // write-ahead log
-	cmdReg   *CommandRegistry          // command registry
-	currentDB int                      // current selected database
+	mu        sync.RWMutex
+	storages  map[int]*storage.Database // database instances indexed by db number
+	wal       *wal.WAL                  // write-ahead log
+	cmdReg    *CommandRegistry          // command registry
+	currentDB int                       // current selected database
 }
 
 // NewEngine creates a new database engine
@@ -28,8 +29,8 @@ func NewEngine(walPath string) (*Engine, error) {
 
 	engine := &Engine{
 		storages:  make(map[int]*storage.Database),
-		wal:      walInstance,
-		cmdReg:   NewCommandRegistry(),
+		wal:       walInstance,
+		cmdReg:    NewCommandRegistry(),
 		currentDB: 0,
 	}
 
@@ -40,24 +41,6 @@ func NewEngine(walPath string) (*Engine, error) {
 	engine.registerBuiltinCommands()
 
 	return engine, nil
-}
-
-// SelectDatabase selects a database by number
-func (e *Engine) SelectDatabase(dbNum int) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if dbNum < 0 || dbNum > 15 { // Redis supports 16 databases by default
-		return fmt.Errorf("invalid database number: %d", dbNum)
-	}
-
-	// Create database if it doesn't exist
-	if _, exists := e.storages[dbNum]; !exists {
-		e.storages[dbNum] = storage.NewDatabase(dbNum)
-	}
-
-	e.currentDB = dbNum
-	return nil
 }
 
 // GetCurrentDatabase returns the current selected database
@@ -79,23 +62,42 @@ func (e *Engine) GetCommandRegistry() *CommandRegistry {
 	return e.cmdReg
 }
 
-// ExecuteCommand executes a Redis command
-func (e *Engine) ExecuteCommand(ctx context.Context, cmd string, args []string, reader transport.Reader, writer transport.Writer) error {
-	// Get command handler
-	handler, exists := e.cmdReg.GetCommand(cmd)
+// ExecuteCommand executes a Redis command using command hash for faster dispatch
+func (e *Engine) ExecuteCommand(transportCtx *transport.Context, cmdHash uint32, cmdName string, reqReader *resp.ReqReader, respWriter *resp.RESPWriter) error {
+	// Get command handler by hash
+	handler, exists := e.cmdReg.GetCommandByHash(cmdHash)
 	if !exists {
-		return fmt.Errorf("unknown command: %s", cmd)
+		return NewUnknownCommandError(cmdName, cmdHash)
 	}
 
-	// Create command context
+	// Get selected database from connection metadata
+	selectedDB := 0 // Default to DB 0
+	if transportCtx.ConnInfo != nil && transportCtx.ConnInfo.Metadata != nil {
+		if dbVal, ok := transportCtx.ConnInfo.Metadata[transport.MetadataSelectedDB]; ok {
+			if db, ok := dbVal.(int); ok {
+				selectedDB = db
+			}
+		}
+	}
+
+	// Get the selected database
+	db, exists := e.storages[selectedDB]
+	if !exists {
+		// Create database if it doesn't exist
+		e.mu.Lock()
+		db = storage.NewDatabase(selectedDB)
+		e.storages[selectedDB] = db
+		e.mu.Unlock()
+	}
+
+	// Create command context with background context
 	cmdCtx := &CommandContext{
-		Engine:   e,
-		Context:  ctx,
-		Command:  cmd,
-		Args:     args,
-		Reader:   reader,
-		Writer:   writer,
-		Database: e.GetCurrentDatabase(),
+		Engine:     e,
+		Context:    context.Background(),
+		Command:    cmdName,
+		ReqReader:  reqReader,
+		RespWriter: respWriter,
+		Database:   db, // Use the selected database from metadata
 	}
 
 	// Execute command
@@ -106,15 +108,19 @@ func (e *Engine) ExecuteCommand(ctx context.Context, cmd string, args []string, 
 
 	// Write to WAL if command modified data
 	if handler.ModifiesData() {
-		entry := &wal.Entry{
-			Database: e.currentDB,
-			Command:  cmd,
-			Args:     args,
-		}
-		if walErr := e.wal.Write(entry); walErr != nil {
-			// Log WAL error but don't fail the command
-			fmt.Printf("WAL write error: %v\n", walErr)
-		}
+		// TODO: 先暂时禁用 WAL 等待数据处理主流程通过。
+		/*
+			entry := &wal.Entry{
+				Timestamp: time.Now().Unix(),
+				Database:  e.currentDB,
+				Command:   cmdName,
+				// We don't have args anymore as they're read from reqReader
+				Args: []string{}, // Empty args, as we now use ReqReader for argument reading
+			}
+			if err := e.wal.Write(entry); err != nil {
+				return fmt.Errorf("failed to write to WAL: %w", err)
+			}
+		*/
 	}
 
 	return nil

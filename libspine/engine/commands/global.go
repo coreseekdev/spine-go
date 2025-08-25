@@ -69,7 +69,7 @@ func (c *HelloCommand) Execute(ctx *engine.CommandContext) error {
 	}
 
 	// Write RESP3 map response
-	return writeRESP3Map(ctx.Writer, response)
+	return ctx.RespWriter.WriteMap(response)
 }
 
 func (c *HelloCommand) GetInfo() *engine.CommandInfo {
@@ -92,21 +92,36 @@ func (c *HelloCommand) ModifiesData() bool {
 type SelectCommand struct{}
 
 func (c *SelectCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) != 1 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'select' command")
-	}
-
-	dbNum, err := strconv.Atoi(ctx.Args[0])
+	// Read the database index argument
+	valueReader, err := ctx.ReqReader.NextReader()
 	if err != nil {
-		return writeRESP3Error(ctx.Writer, "ERR invalid DB index")
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'select' command")
 	}
-
-	err = ctx.Engine.SelectDatabase(dbNum)
+	
+	// Read the database index as a string
+	dbStr, err := valueReader.ReadBulkString()
 	if err != nil {
-		return writeRESP3Error(ctx.Writer, fmt.Sprintf("ERR %s", err.Error()))
+		return ctx.RespWriter.WriteError("ERR invalid DB index")
 	}
-
-	return writeRESP3SimpleString(ctx.Writer, "OK")
+	
+	// Convert to integer
+	dbNum, err := strconv.Atoi(dbStr)
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid DB index")
+	}
+	
+	// Validate database number (Redis typically supports 0-15)
+	if dbNum < 0 || dbNum > 15 {
+		return ctx.RespWriter.WriteError(fmt.Sprintf("ERR invalid DB index: %d", dbNum))
+	}
+	
+	// Set the database in the context
+	ctx.Database = ctx.Engine.GetDatabase(dbNum)
+	if ctx.Database == nil {
+		return ctx.RespWriter.WriteError(fmt.Sprintf("ERR invalid DB index: %d", dbNum))
+	}
+	
+	return ctx.RespWriter.WriteSimpleString("OK")
 }
 
 func (c *SelectCommand) GetInfo() *engine.CommandInfo {
@@ -129,13 +144,26 @@ func (c *SelectCommand) ModifiesData() bool {
 type PingCommand struct{}
 
 func (c *PingCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) == 0 {
-		return writeRESP3SimpleString(ctx.Writer, "PONG")
+	// Check if there are any arguments
+	valueReader, err := ctx.ReqReader.NextReader()
+	if err != nil {
+		// No arguments, return PONG
+		return ctx.RespWriter.WriteSimpleString("PONG")
 	}
-	if len(ctx.Args) == 1 {
-		return writeRESP3BulkString(ctx.Writer, ctx.Args[0])
+	
+	// Read the message argument
+	message, err := valueReader.ReadBulkString()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid argument")
 	}
-	return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'ping' command")
+	
+	// Check for additional arguments (should be none)
+	_, err = ctx.ReqReader.NextReader()
+	if err == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'ping' command")
+	}
+	
+	return ctx.RespWriter.WriteBulkString(message)
 }
 
 func (c *PingCommand) GetInfo() *engine.CommandInfo {
@@ -158,10 +186,25 @@ func (c *PingCommand) ModifiesData() bool {
 type EchoCommand struct{}
 
 func (c *EchoCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) != 1 {
-		return writeRESP3Error(ctx.Writer, "ERR wrong number of arguments for 'echo' command")
+	// Read the message argument
+	valueReader, err := ctx.ReqReader.NextReader()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'echo' command")
 	}
-	return writeRESP3BulkString(ctx.Writer, ctx.Args[0])
+	
+	// Read the message
+	message, err := valueReader.ReadBulkString()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid argument")
+	}
+	
+	// Check for additional arguments (should be none)
+	_, err = ctx.ReqReader.NextReader()
+	if err == nil {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'echo' command")
+	}
+	
+	return ctx.RespWriter.WriteBulkString(message)
 }
 
 func (c *EchoCommand) GetInfo() *engine.CommandInfo {
@@ -185,7 +228,7 @@ type QuitCommand struct{}
 
 func (c *QuitCommand) Execute(ctx *engine.CommandContext) error {
 	// Send OK response and close connection
-	err := writeRESP3SimpleString(ctx.Writer, "OK")
+	err := ctx.RespWriter.WriteSimpleString("OK")
 	if err != nil {
 		return err
 	}
@@ -213,9 +256,11 @@ func (cmd *QuitCommand) ModifiesData() bool {
 type HelpCommand struct{}
 
 func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
-	if len(ctx.Args) == 0 {
+	// Try to read an argument
+	valueReader, err := ctx.ReqReader.NextReader()
+	if err != nil {
 		// 如果没有指定命令，显示所有命令的帮助
-		err := writeRESP3BulkString(ctx.Writer, "Redis commands help:")
+		err := ctx.RespWriter.WriteBulkString("Redis commands help:")
 		if err != nil {
 			return err
 		}
@@ -226,12 +271,12 @@ func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
 		// 按类别组织命令
 		categories := map[engine.CommandCategory][]string{
 			engine.CategoryConnection: {},
-			engine.CategoryServer:     {},
 			engine.CategoryGeneric:    {},
 			engine.CategoryString:     {},
+			engine.CategoryHash:       {},
 			engine.CategoryList:       {},
 			engine.CategorySet:        {},
-			engine.CategoryHash:       {},
+			engine.CategoryServer:     {},
 			engine.CategoryRead:       {},
 			engine.CategoryWrite:      {},
 		}
@@ -243,13 +288,13 @@ func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
 		
 		// 显示每个类别的命令
 		for category, cmdNames := range categories {
-			err = writeRESP3BulkString(ctx.Writer, fmt.Sprintf("\n%s:", category))
+			err = ctx.RespWriter.WriteBulkString(fmt.Sprintf("\n%s:", category))
 			if err != nil {
 				return err
 			}
 			for _, cmdName := range cmdNames {
 				if info, exists := commands[cmdName]; exists {
-					err = writeRESP3BulkString(ctx.Writer, fmt.Sprintf("  %s - %s", info.Name, info.Summary))
+					err = ctx.RespWriter.WriteBulkString(fmt.Sprintf("  %s - %s", info.Name, info.Summary))
 					if err != nil {
 						return err
 					}
@@ -257,29 +302,31 @@ func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
 			}
 		}
 		
-		return writeRESP3BulkString(ctx.Writer, "\nUse HELP <command> for detailed information about a specific command.")
+		return ctx.RespWriter.WriteBulkString("\nUse HELP <command> for detailed information about a specific command.")
 	} else {
 		// 显示特定命令的详细帮助
-		cmdName := strings.ToUpper(ctx.Args[0])
+		cmdName, err := valueReader.ReadBulkString()
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR invalid command name")
+		}
+		cmdName = strings.ToUpper(cmdName)
 		commands := ctx.Engine.GetCommandRegistry().ListCommands()
 		info, exists := commands[cmdName]
 		if !exists {
-			return writeRESP3Error(ctx.Writer, fmt.Sprintf("Unknown command: %s", cmdName))
+			return ctx.RespWriter.WriteError(fmt.Sprintf("Unknown command: %s", cmdName))
 		}
-		err := writeRESP3BulkString(ctx.Writer, fmt.Sprintf("Command: %s", info.Name))
+		err = ctx.RespWriter.WriteBulkString(fmt.Sprintf("Command: %s", info.Name))
 		if err != nil {
 			return err
 		}
-		err = writeRESP3BulkString(ctx.Writer, fmt.Sprintf("Summary: %s", info.Summary))
+		err = ctx.RespWriter.WriteBulkString(fmt.Sprintf("Summary: %s", info.Summary))
 		if err != nil {
 			return err
 		}
-		err = writeRESP3BulkString(ctx.Writer, fmt.Sprintf("Syntax: %s", info.Syntax))
+		err = ctx.RespWriter.WriteBulkString(fmt.Sprintf("Syntax: %s", info.Syntax))
 		if err != nil {
 			return err
 		}
-		
-
 		
 		return nil
 	}

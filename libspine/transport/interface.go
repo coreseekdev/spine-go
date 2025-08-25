@@ -5,6 +5,11 @@ import (
 	"sync"
 )
 
+// Metadata keys for ConnInfo
+const (
+	MetadataSelectedDB = "selected_db" // Key for storing the selected database ID
+)
+
 // ConnectionManager 连接管理器接口，管理所有传输层的连接
 type ConnectionManager interface {
 	AddConnection(conn *ConnInfo)
