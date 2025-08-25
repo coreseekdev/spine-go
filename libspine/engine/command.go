@@ -21,6 +21,7 @@ const (
 	CategorySet        CommandCategory = "SET"
 	CategoryHash       CommandCategory = "HASH"
 	CategoryString     CommandCategory = "STRING"
+	CategoryZSet       CommandCategory = "ZSET"
 	CategoryConnection CommandCategory = "CONNECTION"
 	CategoryServer     CommandCategory = "SERVER"
 	CategoryGeneric    CommandCategory = "GENERIC"

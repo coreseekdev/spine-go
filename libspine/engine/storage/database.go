@@ -38,15 +38,33 @@ type Database struct {
 	dbNum  int
 	data   map[string]*Value
 	expiry map[string]*time.Time // separate expiry tracking for efficiency
+	
+	// Category-specific storage interfaces
+	StringStorage StringStorage
+	HashStorage   HashStorage
+	ListStorage   ListStorage
+	SetStorage    SetStorage
+	ZSetStorage   ZSetStorage
+	CommonStorage CommonStorage
 }
 
 // NewDatabase creates a new database instance
 func NewDatabase(dbNum int) *Database {
-	return &Database{
+	db := &Database{
 		dbNum:  dbNum,
 		data:   make(map[string]*Value),
 		expiry: make(map[string]*time.Time),
 	}
+	
+	// Initialize category-specific storages
+	db.StringStorage = NewStringStorage(db)
+	db.HashStorage = NewHashStorage(db)
+	db.ListStorage = NewListStorage(db)
+	db.SetStorage = NewSetStorage(db)
+	db.ZSetStorage = NewZSetStorage(db)
+	db.CommonStorage = NewCommonStorage(db)
+	
+	return db
 }
 
 // GetDBNum returns the database number
