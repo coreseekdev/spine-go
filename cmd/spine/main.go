@@ -5,10 +5,16 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"spine-go/libspine"
 	"strings"
 	"syscall"
 )
+
+// isWindows 检测当前操作系统是否为 Windows
+func isWindows() bool {
+	return runtime.GOOS == "windows"
+}
 
 func main() {
 	// 解析命令行参数
@@ -19,7 +25,7 @@ func main() {
 	)
 
 	// 自定义 flag 函数来收集多个 --listen 参数
-	flag.Func("listen", "Listen address (format: schema://host:port, e.g., tcp://:8080, http://:8000, unix:///tmp/spine.sock). Can be specified multiple times.", func(value string) error {
+	flag.Func("listen", "Listen address (format: schema://host:port, e.g., tcp://:8080, http://:8000, local:///tmp/spine.sock, local:///spine). Can be specified multiple times.", func(value string) error {
 		listenArgs = append(listenArgs, value)
 		return nil
 	})
@@ -44,8 +50,8 @@ func main() {
 		schema := parts[0]
 		hostPort := parts[1]
 
-		// 对于 unix schema，hostPort 就是路径
-		if schema == "unix" {
+		// 对于 local schema，hostPort 就是路径
+		if schema == "local" {
 			listenConfigs = append(listenConfigs, libspine.ListenConfig{
 				Schema: schema,
 				Host:   "",
@@ -81,6 +87,24 @@ func main() {
 		listenConfigs = []libspine.ListenConfig{
 			{Schema: "tcp", Host: "", Port: "8080", Path: ""},
 			{Schema: "http", Host: "", Port: "8000", Path: ""},
+		}
+		// 添加本地传输监听示例
+		if isWindows() {
+			// Windows 上使用 Named Pipe 风格路径
+			listenConfigs = append(listenConfigs, libspine.ListenConfig{
+				Schema: "local",
+				Host:   "",
+				Port:   "",
+				Path:   "/spine",
+			})
+		} else {
+			// Unix 上使用 Unix Socket 路径
+			listenConfigs = append(listenConfigs, libspine.ListenConfig{
+				Schema: "local",
+				Host:   "",
+				Port:   "",
+				Path:   "/tmp/spine.sock",
+			})
 		}
 	}
 

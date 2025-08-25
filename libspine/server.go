@@ -3,8 +3,10 @@ package libspine
 import (
 	"fmt"
 	"log"
+	"runtime"
 	"spine-go/libspine/handler"
 	"spine-go/libspine/transport"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,10 +22,10 @@ type Server struct {
 
 // ListenConfig 监听配置
 type ListenConfig struct {
-	Schema string // "tcp", "unix", "ws"
+	Schema string // "tcp", "local", "http"
 	Host   string // 监听主机
 	Port   string // 监听端口
-	Path   string // 路径， ws / unix socket / named pipe 可用
+	Path   string // 路径， http / local 可用
 }
 
 // Config 服务器配置
@@ -31,6 +33,30 @@ type Config struct {
 	ListenConfigs []ListenConfig // 监听配置数组
 	ServerMode    string         // "chat" 或 "redis"
 	StaticPath    string         // 静态文件路径，用于 chat webui
+}
+
+// isWindows 检测当前操作系统是否为 Windows
+func isWindows() bool {
+	return runtime.GOOS == "windows"
+}
+
+// convertLocalPath 转换本地路径
+// Unix: 直接使用原路径
+// Windows: 将 /abc/xyz 转换为 \\.\pipe\abc\xyz
+func convertLocalPath(path string) string {
+	if isWindows() {
+		// Windows Named Pipe 路径转换
+		if strings.HasPrefix(path, "/") {
+			// 移除开头的 /，然后转换为 Windows 路径分隔符
+			pipePath := strings.TrimPrefix(path, "/")
+			pipePath = strings.ReplaceAll(pipePath, "/", "\\")
+			return "\\\\.\\pipe\\" + pipePath
+		}
+		return path
+	} else {
+		// Unix Socket 路径直接使用
+		return path
+	}
 }
 
 // NewServer 创建新的服务器
@@ -97,32 +123,29 @@ func (s *Server) startTransport(config ListenConfig, _ string, staticPath string
 		log.Printf("TCP transport starting on %s", address)
 		return transportInstance.Start(s.serverCtx)
 
-	case "unix":
-		address = config.Path
-		transportInstance, err = transport.NewUnixSocketTransport(address)
-		if err != nil {
-			return err
+	case "local":
+		// 根据平台转换路径
+		address = convertLocalPath(config.Path)
+		
+		// 根据平台选择传输层
+		if isWindows() {
+			transportInstance, err = transport.NewNamedPipeTransport(address)
+			if err != nil {
+				return err
+			}
+			log.Printf("Named pipe transport starting on %s", address)
+		} else {
+			transportInstance, err = transport.NewUnixSocketTransport(address)
+			if err != nil {
+				return err
+			}
+			log.Printf("Unix socket transport starting on %s", address)
 		}
 
 		s.mu.Lock()
 		s.transports = append(s.transports, transportInstance)
 		s.mu.Unlock()
 
-		log.Printf("Unix socket transport starting on %s", address)
-		return transportInstance.Start(s.serverCtx)
-
-	case "namedpipe":
-		address = config.Path
-		transportInstance, err = transport.NewNamedPipeTransport(address)
-		if err != nil {
-			return err
-		}
-
-		s.mu.Lock()
-		s.transports = append(s.transports, transportInstance)
-		s.mu.Unlock()
-
-		log.Printf("Named pipe transport starting on %s", address)
 		return transportInstance.Start(s.serverCtx)
 
 	case "http":

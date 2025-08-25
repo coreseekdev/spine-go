@@ -87,6 +87,7 @@ func (c *NamedPipeTestClient) readData(buffer []byte) (int, error) {
 		return 0, fmt.Errorf("invalid connection handle")
 	}
 
+	// 使用同步读取
 	var bytesRead uint32
 	err := windows.ReadFile(handle, buffer, &bytesRead, nil)
 	if err != nil {
@@ -94,7 +95,7 @@ func (c *NamedPipeTestClient) readData(buffer []byte) (int, error) {
 		if err == windows.ERROR_BROKEN_PIPE || err == windows.ERROR_PIPE_NOT_CONNECTED {
 			return 0, fmt.Errorf("pipe disconnected")
 		}
-		return 0, fmt.Errorf("failed to read from named pipe: %v", err)
+		return 0, fmt.Errorf("ReadFile failed: %v", err)
 	}
 
 	return int(bytesRead), nil
