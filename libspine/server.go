@@ -228,8 +228,11 @@ func (s *Server) registerHandlers() {
 		// 直接设置处理器到服务器上下文
 		s.serverCtx.SetHandler(chatHandler)
 	} else if s.config.ServerMode == "redis" {
-		redisHandler := handler.NewRedisHandler()
-		s.serverCtx.SetHandler(redisHandler)
+		redisHandler, err := handler.NewRedisHandler("")
+	if err != nil {
+		log.Fatalf("failed to create redis handler: %v", err)
+	}
+	s.serverCtx.SetHandler(redisHandler)
 	}
 
 	log.Printf("Registered handler for server mode: %s", s.config.ServerMode)
