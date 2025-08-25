@@ -5,18 +5,48 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-# Build all components
-go build -o spine ./spine/
-go build -o spine-cli ./spine-cli/
-go build -o spine-ws ./spine-ws/
+# Build all components using Makefile
+make all
+make build
 
 # Build individual components
-go build -o spine ./spine/main.go
-go build -o spine-cli ./spine-cli/main.go
-go build -o spine-ws ./spine-ws/main.go
+make spine      # Main server
+make spine-cli  # CLI client
+make spine-ws   # WebSocket client
+
+# Alternative manual builds
+go build -o bin/spine ./cmd/spine/
+go build -o bin/spine-cli ./cmd/spine-cli/
+go build -o bin/spine-ws ./cmd/spine-ws/
 
 # Install dependencies
 go mod tidy
+
+# Clean build artifacts
+make clean
+
+# Run components
+make run       # Main server
+make run-cli   # CLI client
+make run-ws    # WebSocket client
+```
+
+## Testing Commands
+
+```bash
+# Run unit tests
+go test ./libspine/handler/ -v
+go test ./test/redis/ -v
+go test ./test/e2e/ -v
+
+# Run integration tests
+go test ./integration_test.go -v
+
+# Run all tests
+go test ./... -v
+
+# Run tests with coverage
+go test -cover ./...
 ```
 
 ## Architecture Overview
@@ -48,9 +78,9 @@ The application uses a **transport-handler pattern** where:
   - `server.go`: Main server orchestrating multiple transports
   - `client.go`: Client library for connecting to servers
 
-- **spine/**: Server entry point that can run multiple transports simultaneously
-- **spine-cli/**: Command-line client supporting both chat and Redis modes
-- **spine-ws/**: Standalone WebSocket server with web interface
+- **cmd/spine/**: Server entry point that can run multiple transports simultaneously
+- **cmd/spine-cli/**: Command-line client supporting both chat and Redis modes
+- **cmd/spine-ws/**: Standalone WebSocket client with web interface
 
 ### Handler System
 
@@ -71,9 +101,34 @@ Each transport implements:
 
 TCP and Unix Socket use HTTP-like protocols, while WebSocket uses JSON messages for better web compatibility.
 
+## Project Structure
+
+```
+spine-go/
+├── cmd/               # Executable entry points
+│   ├── spine/         # Main server
+│   ├── spine-cli/     # CLI client
+│   └── spine-ws/      # WebSocket client
+├── libspine/          # Core library
+│   ├── transport/     # Transport layer (TCP, Unix, WebSocket)
+│   ├── handler/       # Business logic handlers
+│   ├── server.go      # Server orchestration
+│   └── client.go      # Client library
+├── test/              # Test suites
+│   ├── e2e/          # End-to-end tests
+│   └── redis/        # Redis compatibility tests
+├── web/               # Web UI static files
+├── go-redis/          # Redis implementation (vendored)
+├── redcon/           # Redis protocol implementation
+├── integration_test.go # Integration tests
+└── Makefile          # Build automation
+```
+
 ## Important Implementation Notes
 
 - All ID generation functions must have unique names to avoid conflicts (generateServerID, generateClientID, etc.)
 - Error handling should return appropriate HTTP status codes through the transport layer
-- The WebSocket server (spine-ws) is separate from the main server and includes its own web interface
+- The WebSocket client (spine-ws) is separate from the main server and includes its own connection handling
 - Redis handler supports basic operations but is designed for demonstration purposes
+- Binary outputs are placed in `bin/` directory by the Makefile
+- The server supports multiple simultaneous listeners via `-listen` flags
