@@ -151,15 +151,15 @@ func (c *PingCommand) Execute(ctx *engine.CommandContext) error {
 		// No arguments, return PONG
 		return ctx.RespWriter.WriteSimpleString("PONG")
 	} else if nargs == 1 {
-		// Get the next argument reader
-		valueReader, err := ctx.ReqReader.NextReader()
+		// Get the next argument value
+		messageValue, err := ctx.ReqReader.NextValue()
 		if err != nil {
 			return ctx.RespWriter.WriteError("ERR invalid argument")
 		}
 
 		// Read the message argument
-		message, err := valueReader.ReadBulkString()
-		if err != nil {
+		message, ok := messageValue.AsString()
+		if !ok {
 			return ctx.RespWriter.WriteError("ERR invalid argument")
 		}
 

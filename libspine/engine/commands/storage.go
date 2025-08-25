@@ -90,59 +90,53 @@ func (c *SetCommand) Execute(ctx *engine.CommandContext) error {
 	}
 
 	// Read key
-	valueReader, err := ctx.ReqReader.NextReader()
+	keyValue, err := ctx.ReqReader.NextValue()
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'set' command")
 	}
 
-	key, err := valueReader.ReadBulkString()
-	if err != nil {
+	key, ok := keyValue.AsString()
+	if !ok {
 		return ctx.RespWriter.WriteError("ERR invalid key")
 	}
 
 	// Read value
-	valueReader, err = ctx.ReqReader.NextReader()
+	valValue, err := ctx.ReqReader.NextValue()
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'set' command")
 	}
 
-	value, err := valueReader.ReadBulkString()
-	if err != nil {
+	value, ok := valValue.AsString()
+	if !ok {
 		return ctx.RespWriter.WriteError("ERR invalid value")
 	}
 	
 	var expiration *time.Time
-	argsProcessed := 2 // key and value
 
 	// Parse optional arguments (EX, PX, EXAT, PXAT, NX, XX)
-	for argsProcessed < nargs {
-		optionReader, err := ctx.ReqReader.NextReader()
+	for {
+		optionValue, err := ctx.ReqReader.NextValue()
 		if err != nil {
-			return ctx.RespWriter.WriteError("ERR syntax error")
+			// No more arguments
+			break
 		}
-		argsProcessed++
 
-		option, err := optionReader.ReadBulkString()
-		if err != nil {
+		option, ok := optionValue.AsString()
+		if !ok {
 			return ctx.RespWriter.WriteError("ERR syntax error")
 		}
 
 		option = strings.ToUpper(option)
 
-		if argsProcessed >= nargs {
-			return ctx.RespWriter.WriteError("ERR syntax error")
-		}
-
-		argReader, err := ctx.ReqReader.NextReader()
+		argValue, err := ctx.ReqReader.NextValue()
 		if err != nil {
 			return ctx.RespWriter.WriteError("ERR syntax error")
 		}
-		argsProcessed++
 
 		switch option {
 		case "EX": // seconds
-			arg, err := argReader.ReadBulkString()
-			if err != nil {
+			arg, ok := argValue.AsString()
+			if !ok {
 				return ctx.RespWriter.WriteError("ERR invalid argument")
 			}
 			seconds, err := strconv.ParseInt(arg, 10, 64)
@@ -152,8 +146,8 @@ func (c *SetCommand) Execute(ctx *engine.CommandContext) error {
 			exp := time.Now().Add(time.Duration(seconds) * time.Second)
 			expiration = &exp
 		case "PX": // milliseconds
-			arg, err := argReader.ReadBulkString()
-			if err != nil {
+			arg, ok := argValue.AsString()
+			if !ok {
 				return ctx.RespWriter.WriteError("ERR invalid argument")
 			}
 			milliseconds, err := strconv.ParseInt(arg, 10, 64)
@@ -196,13 +190,13 @@ func (c *SetCommand) ModifiesData() bool {
 type GetCommand struct{}
 
 func (c *GetCommand) Execute(ctx *engine.CommandContext) error {
-	valueReader, err := ctx.ReqReader.NextReader()
-	if err != nil || valueReader == nil {
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'get' command")
 	}
 
-	key, err := valueReader.ReadBulkString()
-	if err != nil {
+	key, ok := keyValue.AsString()
+	if !ok {
 		return ctx.RespWriter.WriteError("ERR invalid key")
 	}
 	value, exists := ctx.Database.Get(key)
@@ -246,12 +240,12 @@ func (c *DelCommand) Execute(ctx *engine.CommandContext) error {
 
 	var keys []string
 	for i := 0; i < nargs; i++ {
-		valueReader, err := ctx.ReqReader.NextReader()
+		keyValue, err := ctx.ReqReader.NextValue()
 		if err != nil {
 			return ctx.RespWriter.WriteError("ERR invalid key")
 		}
-		key, err := valueReader.ReadBulkString()
-		if err != nil {
+		key, ok := keyValue.AsString()
+		if !ok {
 			return ctx.RespWriter.WriteError("ERR invalid key")
 		}
 		keys = append(keys, key)
@@ -294,12 +288,12 @@ func (c *ExistsCommand) Execute(ctx *engine.CommandContext) error {
 
 	var keys []string
 	for i := 0; i < nargs; i++ {
-		valueReader, err := ctx.ReqReader.NextReader()
+		keyValue, err := ctx.ReqReader.NextValue()
 		if err != nil {
 			return ctx.RespWriter.WriteError("ERR invalid key")
 		}
-		key, err := valueReader.ReadBulkString()
-		if err != nil {
+		key, ok := keyValue.AsString()
+		if !ok {
 			return ctx.RespWriter.WriteError("ERR invalid key")
 		}
 		keys = append(keys, key)

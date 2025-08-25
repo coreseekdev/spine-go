@@ -37,16 +37,34 @@ func (r *RESPReader) ReadBulkString() (string, error) {
 		return "", err
 	}
 
-	str, ok := val.(string)
+	if val.IsNull() {
+		return "", nil
+	}
+
+	str, ok := val.AsString()
 	if !ok {
-		return "", fmt.Errorf("expected string, got %T", val)
+		return "", fmt.Errorf("expected string, got %T", val.Value)
 	}
 
 	return str, nil
 }
 
-// ReadValue reads a single RESP value
-func (r *RESPReader) ReadValue() (interface{}, error) {
+// ReadValue reads a single RESP value and returns both type and value
+func (r *RESPReader) ReadValue() (*RESPValue, error) {
+	return r.readValue()
+}
+
+// ReadValueLegacy reads a single RESP value (legacy interface for backward compatibility)
+func (r *RESPReader) ReadValueLegacy() (interface{}, error) {
+	value, err := r.readValue()
+	if err != nil {
+		return nil, err
+	}
+	return value.Value, nil
+}
+
+// readValue is the internal implementation
+func (r *RESPReader) readValue() (*RESPValue, error) {
 	line, err := r.readLine()
 	if err != nil {
 		return nil, err
@@ -59,13 +77,17 @@ func (r *RESPReader) ReadValue() (interface{}, error) {
 	switch line[0] {
 	case '+':
 		// Simple string
-		return line[1:], nil
+		return NewRESPValue(RESPTypeSimpleString, line[1:]), nil
 	case '-':
 		// Error
-		return fmt.Errorf("redis error: %s", line[1:]), nil
+		return NewRESPValue(RESPTypeError, fmt.Errorf("redis error: %s", line[1:])), nil
 	case ':':
 		// Integer
-		return strconv.ParseInt(line[1:], 10, 64)
+		val, err := strconv.ParseInt(line[1:], 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		return NewRESPValue(RESPTypeInteger, val), nil
 	case '$':
 		// Bulk string
 		return r.readBulkString(line[1:])
@@ -107,20 +129,23 @@ func (r *RESPReader) readLine() (string, error) {
 }
 
 // readBulkString reads a bulk string
-func (r *RESPReader) readBulkString(lengthStr string) (interface{}, error) {
+func (r *RESPReader) readBulkString(lengthStr string) (*RESPValue, error) {
 	length, err := strconv.Atoi(lengthStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid bulk string length: %w", err)
 	}
 
 	if length == -1 {
-		return nil, nil // Null bulk string
+		return NewRESPValue(RESPTypeNull, nil), nil // Null bulk string
 	}
 
 	if length == 0 {
 		// Empty string, still need to read \r\n
 		_, err := r.readLine()
-		return "", err
+		if err != nil {
+			return nil, err
+		}
+		return NewRESPValue(RESPTypeBulkString, ""), nil
 	}
 
 	// Read the string data
@@ -136,21 +161,21 @@ func (r *RESPReader) readBulkString(lengthStr string) (interface{}, error) {
 		return nil, fmt.Errorf("failed to read bulk string trailer: %w", err)
 	}
 
-	return string(buf), nil
+	return NewRESPValue(RESPTypeBulkString, string(buf)), nil
 }
 
 // readArray reads an array
-func (r *RESPReader) readArray(lengthStr string) (interface{}, error) {
+func (r *RESPReader) readArray(lengthStr string) (*RESPValue, error) {
 	length, err := strconv.Atoi(lengthStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid array length: %w", err)
 	}
 
 	if length == -1 {
-		return nil, nil // Null array
+		return NewRESPValue(RESPTypeNull, nil), nil // Null array
 	}
 
-	arr := make([]interface{}, length)
+	arr := make([]*RESPValue, length)
 	for i := 0; i < length; i++ {
 		value, err := r.ReadValue()
 		if err != nil {
@@ -159,30 +184,30 @@ func (r *RESPReader) readArray(lengthStr string) (interface{}, error) {
 		arr[i] = value
 	}
 
-	return arr, nil
+	return NewRESPValue(RESPTypeArray, arr), nil
 }
 
 // readMap reads a map (RESP3)
-func (r *RESPReader) readMap(lengthStr string) (interface{}, error) {
+func (r *RESPReader) readMap(lengthStr string) (*RESPValue, error) {
 	length, err := strconv.Atoi(lengthStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid map length: %w", err)
 	}
 
 	if length == -1 {
-		return nil, nil // Null map
+		return NewRESPValue(RESPTypeNull, nil), nil // Null map
 	}
 
-	m := make(map[string]interface{})
+	m := make(map[string]*RESPValue)
 	for i := 0; i < length; i++ {
 		// Read key
 		key, err := r.ReadValue()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read map key %d: %w", i, err)
 		}
-		keyStr, ok := key.(string)
+		keyStr, ok := key.AsString()
 		if !ok {
-			return nil, fmt.Errorf("map key must be string, got %T", key)
+			return nil, fmt.Errorf("map key must be string, got %T", key.Value)
 		}
 
 		// Read value
@@ -194,23 +219,23 @@ func (r *RESPReader) readMap(lengthStr string) (interface{}, error) {
 		m[keyStr] = value
 	}
 
-	return m, nil
+	return NewRESPValue(RESPTypeMap, m), nil
 }
 
 // readBoolean reads a boolean (RESP3)
-func (r *RESPReader) readBoolean(valueStr string) (interface{}, error) {
+func (r *RESPReader) readBoolean(valueStr string) (*RESPValue, error) {
 	switch valueStr {
 	case "t":
-		return true, nil
+		return NewRESPValue(RESPTypeBoolean, true), nil
 	case "f":
-		return false, nil
+		return NewRESPValue(RESPTypeBoolean, false), nil
 	default:
 		return nil, fmt.Errorf("invalid boolean value: %s", valueStr)
 	}
 }
 
 // readBlobError reads a blob error (RESP3)
-func (r *RESPReader) readBlobError(lengthStr string) (interface{}, error) {
+func (r *RESPReader) readBlobError(lengthStr string) (*RESPValue, error) {
 	length, err := strconv.Atoi(lengthStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid blob error length: %w", err)
@@ -228,11 +253,11 @@ func (r *RESPReader) readBlobError(lengthStr string) (interface{}, error) {
 		return nil, fmt.Errorf("failed to read blob error trailer: %w", err)
 	}
 
-	return fmt.Errorf("redis blob error: %s", string(buf)), nil
+	return NewRESPValue(RESPTypeBulkError, fmt.Errorf("redis blob error: %s", string(buf))), nil
 }
 
 // readVerbatimString reads a verbatim string (RESP3)
-func (r *RESPReader) readVerbatimString(lengthStr string) (interface{}, error) {
+func (r *RESPReader) readVerbatimString(lengthStr string) (*RESPValue, error) {
 	length, err := strconv.Atoi(lengthStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid verbatim string length: %w", err)
@@ -253,14 +278,14 @@ func (r *RESPReader) readVerbatimString(lengthStr string) (interface{}, error) {
 	// Verbatim strings have format: <encoding>:<data>
 	data := string(buf)
 	if len(data) >= 4 && data[3] == ':' {
-		return data[4:], nil // Return data without encoding prefix
+		return NewRESPValue(RESPTypeVerbatimString, data[4:]), nil // Return data without encoding prefix
 	}
-	return data, nil
+	return NewRESPValue(RESPTypeVerbatimString, data), nil
 }
 
 // readBigNumber reads a big number (RESP3)
-func (r *RESPReader) readBigNumber(valueStr string) (interface{}, error) {
+func (r *RESPReader) readBigNumber(valueStr string) (*RESPValue, error) {
 	// For simplicity, return as string
 	// In production, you might want to use big.Int
-	return valueStr, nil
+	return NewRESPValue(RESPTypeBigNumber, valueStr), nil
 }

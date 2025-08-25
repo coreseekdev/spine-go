@@ -13,11 +13,12 @@ import (
 
 // ReqReader wraps a transport.Reader to provide RESP protocol parsing for Redis requests
 type ReqReader struct {
-	reader   *bufio.Reader
-	command  string
-	nargs    int
-	hash     uint32 // Will be non-zero if command has been parsed
-	parseErr error  // Store any error that occurred during parsing
+	reader      *bufio.Reader
+	command     string
+	nargs       int
+	hash        uint32 // Will be non-zero if command has been parsed
+	parseErr    error  // Store any error that occurred during parsing
+	argsRead    int    // Counter for parsed arguments
 }
 
 // NewReqReader creates a new RESP request reader
@@ -26,6 +27,7 @@ func NewReqReader(reader transport.Reader) *ReqReader {
 		reader:   bufio.NewReader(reader),
 		hash:     0,
 		parseErr: nil,
+		argsRead: 0,
 	}
 }
 
@@ -150,7 +152,36 @@ func (r *ReqReader) parseCommandAndArgs() error {
 	return nil
 }
 
-// NextReader returns a RESPReader for reading the next argument
+// NextValue returns the next argument value with its type, tracking parsed arguments count
+func (r *ReqReader) NextValue() (*RESPValue, error) {
+	// Ensure command and args are parsed first
+	if err := r.parseCommandAndArgs(); err != nil {
+		return nil, err
+	}
+
+	// Check if we've already read all arguments
+	if r.argsRead >= r.nargs {
+		return nil, fmt.Errorf("no more arguments available (read %d of %d)", r.argsRead, r.nargs)
+	}
+
+	// Create a RESPReader to read the next value
+	respReader := &RESPReader{
+		reader: r.reader,
+	}
+
+	// Read the value
+	value, err := respReader.ReadValue()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read argument %d: %w", r.argsRead+1, err)
+	}
+
+	// Increment the args counter
+	r.argsRead++
+
+	return value, nil
+}
+
+// NextReader returns a RESPReader for reading the next argument (legacy method)
 func (r *ReqReader) NextReader() (*RESPReader, error) {
 	// 如果 command 存在多个 args , 则可通过调用多次 next reader 来读取
 	// Ensure command and args are parsed first
@@ -170,6 +201,7 @@ func (r *ReqReader) Reset() {
 	r.nargs = 0
 	r.hash = 0
 	r.parseErr = nil
+	r.argsRead = 0
 }
 
 // readLine reads a line ending with \r\n
