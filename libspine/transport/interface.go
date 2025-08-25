@@ -7,7 +7,10 @@ import (
 
 // Metadata keys for ConnInfo
 const (
-	MetadataSelectedDB = "selected_db" // Key for storing the selected database ID
+	MetadataSelectedDB    = "selected_db"    // Key for storing the selected database ID
+	MetadataSubscriptions = "subscriptions"  // []string - subscribed channels
+	MetadataPatternSubs   = "pattern_subs"   // []string - pattern subscriptions
+	MetadataPubSubMode    = "pubsub_mode"    // bool - is in pub/sub mode
 )
 
 // ConnectionManager 连接管理器接口，管理所有传输层的连接

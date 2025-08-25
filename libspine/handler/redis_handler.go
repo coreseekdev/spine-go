@@ -73,6 +73,10 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 		if err != nil {
 			// 连接关闭或读取错误
 			if err == io.EOF {
+				// 清理 pub/sub 订阅
+				if ctx.ConnInfo != nil {
+					h.engine.GetPubSubManager().RemoveConnection(ctx.ConnInfo.ID)
+				}
 				return nil
 			}
 			log.Printf("Error parsing RESP command: %v", err)

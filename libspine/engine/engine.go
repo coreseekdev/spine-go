@@ -2,9 +2,9 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
+	"spine-go/libspine/engine/pubsub"
 	"spine-go/libspine/engine/resp"
 	"spine-go/libspine/engine/storage"
 	"spine-go/libspine/engine/wal"
@@ -17,20 +17,22 @@ type Engine struct {
 	storages  map[int]*storage.Database // database instances indexed by db number
 	wal       *wal.WAL                  // write-ahead log
 	cmdReg    *CommandRegistry          // command registry
+	pubsubMgr *pubsub.PubSubManager     // pub/sub manager
 	currentDB int                       // current selected database
 }
 
 // NewEngine creates a new database engine
 func NewEngine(walPath string) (*Engine, error) {
-	walInstance, err := wal.New(walPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create WAL: %w", err)
-	}
+	// walInstance, err := wal.New(walPath)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to create WAL: %w", err)
+	// }
 
 	engine := &Engine{
 		storages:  make(map[int]*storage.Database),
-		wal:       walInstance,
+		wal:       nil,
 		cmdReg:    NewCommandRegistry(),
+		pubsubMgr: pubsub.NewPubSubManager(),
 		currentDB: 0,
 	}
 
@@ -38,7 +40,7 @@ func NewEngine(walPath string) (*Engine, error) {
 	engine.storages[0] = storage.NewDatabase(0)
 
 	// Register built-in commands
-	engine.registerBuiltinCommands()
+	// engine.registerBuiltinCommands()
 
 	return engine, nil
 }
@@ -60,6 +62,11 @@ func (e *Engine) GetDatabase(dbNum int) *storage.Database {
 // GetCommandRegistry returns the command registry
 func (e *Engine) GetCommandRegistry() *CommandRegistry {
 	return e.cmdReg
+}
+
+// GetPubSubManager returns the pub/sub manager
+func (e *Engine) GetPubSubManager() *pubsub.PubSubManager {
+	return e.pubsubMgr
 }
 
 // ExecuteCommand executes a Redis command using command hash for faster dispatch
@@ -92,12 +99,13 @@ func (e *Engine) ExecuteCommand(transportCtx *transport.Context, cmdHash uint32,
 
 	// Create command context with background context
 	cmdCtx := &CommandContext{
-		Engine:     e,
-		Context:    context.Background(),
-		Command:    cmdName,
-		ReqReader:  reqReader,
-		RespWriter: respWriter,
-		Database:   db, // Use the selected database from metadata
+		Engine:       e,
+		Context:      context.Background(),
+		Command:      cmdName,
+		ReqReader:    reqReader,
+		RespWriter:   respWriter,
+		Database:     db, // Use the selected database from metadata
+		TransportCtx: transportCtx,
 	}
 
 	// Execute command
@@ -135,10 +143,4 @@ func (e *Engine) Close() error {
 		return e.wal.Close()
 	}
 	return nil
-}
-
-// registerBuiltinCommands registers all built-in Redis commands
-func (e *Engine) registerBuiltinCommands() {
-	// This will be implemented when we create the commands package
-	// For now, we'll add a placeholder
 }

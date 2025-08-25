@@ -8,6 +8,7 @@ import (
 
 	"spine-go/libspine/engine/resp"
 	"spine-go/libspine/engine/storage"
+	"spine-go/libspine/transport"
 )
 
 // CommandCategory represents command categories
@@ -66,12 +67,13 @@ type CommandHandler interface {
 
 // CommandContext provides context for command execution
 type CommandContext struct {
-	Engine     *Engine           // Engine instance
-	Context    context.Context   // Request context
-	Command    string            // Command name
-	ReqReader  *resp.ReqReader   // RESP request reader
-	RespWriter *resp.RESPWriter  // RESP response writer
-	Database   *storage.Database // Current database
+	Engine        *Engine              // Engine instance
+	Context       context.Context      // Request context
+	Command       string               // Command name
+	ReqReader     *resp.ReqReader      // RESP request reader
+	RespWriter    *resp.RESPWriter     // RESP response writer
+	Database      *storage.Database    // Current database
+	TransportCtx  *transport.Context   // Transport context
 }
 
 // CommandRegistry manages command registration and lookup

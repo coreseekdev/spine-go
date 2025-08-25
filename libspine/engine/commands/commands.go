@@ -1,10 +1,8 @@
 package commands
 
-import (
-	"spine-go/libspine/engine"
-)
+import "spine-go/libspine/engine"
 
-// RegisterAllCommands registers all built-in Redis commands
+// RegisterAllCommands registers all available commands
 func RegisterAllCommands(registry *engine.CommandRegistry) error {
 	// Register global commands
 	if err := RegisterGlobalCommands(registry); err != nil {
@@ -13,6 +11,11 @@ func RegisterAllCommands(registry *engine.CommandRegistry) error {
 
 	// Register storage commands
 	if err := RegisterStorageCommands(registry); err != nil {
+		return err
+	}
+
+	// Register pub/sub commands
+	if err := RegisterPubSubCommands(registry); err != nil {
 		return err
 	}
 
