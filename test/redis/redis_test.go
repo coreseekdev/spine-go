@@ -3,6 +3,8 @@ package redis
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,8 +36,19 @@ func (suite *RedisTestSuite) SetupTest() error {
 	// 创建 TCP 传输层（使用现有监听器）
 	suite.transport = &transport.TCPTransport{}
 
+	// 创建临时WAL目录
+	tempDir, err := os.MkdirTemp("", "redis-test-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %v", err)
+	}
+	
+	walPath := filepath.Join(tempDir, "redis.wal")
+
 	// 创建 Redis 处理器
-	redisHandler := handler.NewRedisHandler()
+	redisHandler, err := handler.NewRedisHandler(walPath)
+	if err != nil {
+		return fmt.Errorf("failed to create Redis handler: %v", err)
+	}
 
 	// 创建服务器上下文
 	serverInfo := &transport.ServerInfo{

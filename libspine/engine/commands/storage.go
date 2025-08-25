@@ -13,44 +13,64 @@ import (
 func RegisterStorageCommands(registry *engine.CommandRegistry) error {
 	// SET 命令
 	setCmd := &SetCommand{}
-	registry.RegisterCommand("SET", setCmd)
+	if err := registry.Register(setCmd); err != nil {
+		return err
+	}
 
 	// GET 命令
 	getCmd := &GetCommand{}
-	registry.RegisterCommand("GET", getCmd)
+	if err := registry.Register(getCmd); err != nil {
+		return err
+	}
 
 	// DEL 命令
 	delCmd := &DelCommand{}
-	registry.RegisterCommand("DEL", delCmd)
+	if err := registry.Register(delCmd); err != nil {
+		return err
+	}
 	registry.RegisterAlias("DEL", "DELETE") // 添加别名
 
 	// EXISTS 命令
 	existsCmd := &ExistsCommand{}
-	registry.RegisterCommand("EXISTS", existsCmd)
+	if err := registry.Register(existsCmd); err != nil {
+		return err
+	}
 
 	// TYPE 命令
 	typeCmd := &TypeCommand{}
-	registry.RegisterCommand("TYPE", typeCmd)
+	if err := registry.Register(typeCmd); err != nil {
+		return err
+	}
 
 	// EXPIRE 命令
 	expireCmd := &ExpireCommand{}
-	registry.RegisterCommand("EXPIRE", expireCmd)
+	if err := registry.Register(expireCmd); err != nil {
+		return err
+	}
 
 	// TTL 命令
 	ttlCmd := &TTLCommand{}
-	registry.RegisterCommand("TTL", ttlCmd)
+	if err := registry.Register(ttlCmd); err != nil {
+		return err
+	}
 
 	// KEYS 命令
 	keysCmd := &KeysCommand{}
-	registry.RegisterCommand("KEYS", keysCmd)
+	if err := registry.Register(keysCmd); err != nil {
+		return err
+	}
 
 	// FLUSHDB 命令
 	flushdbCmd := &FlushDBCommand{}
-	registry.RegisterCommand("FLUSHDB", flushdbCmd)
+	if err := registry.Register(flushdbCmd); err != nil {
+		return err
+	}
 
 	// DBSIZE 命令
 	dbsizeCmd := &DBSizeCommand{}
-	registry.RegisterCommand("DBSIZE", dbsizeCmd)
+	if err := registry.Register(dbsizeCmd); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -59,8 +79,19 @@ func RegisterStorageCommands(registry *engine.CommandRegistry) error {
 type SetCommand struct{}
 
 func (c *SetCommand) Execute(ctx *engine.CommandContext) error {
+	// Get the number of arguments first
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid command format")
+	}
+	
+	if nargs < 2 {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'set' command")
+	}
+
+	// Read key
 	valueReader, err := ctx.ReqReader.NextReader()
-	if err != nil || valueReader == nil {
+	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'set' command")
 	}
 
@@ -69,8 +100,9 @@ func (c *SetCommand) Execute(ctx *engine.CommandContext) error {
 		return ctx.RespWriter.WriteError("ERR invalid key")
 	}
 
+	// Read value
 	valueReader, err = ctx.ReqReader.NextReader()
-	if err != nil || valueReader == nil {
+	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'set' command")
 	}
 
@@ -78,14 +110,17 @@ func (c *SetCommand) Execute(ctx *engine.CommandContext) error {
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR invalid value")
 	}
+	
 	var expiration *time.Time
+	argsProcessed := 2 // key and value
 
 	// Parse optional arguments (EX, PX, EXAT, PXAT, NX, XX)
-	for {
+	for argsProcessed < nargs {
 		optionReader, err := ctx.ReqReader.NextReader()
-		if err != nil || optionReader == nil {
-			break
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR syntax error")
 		}
+		argsProcessed++
 
 		option, err := optionReader.ReadBulkString()
 		if err != nil {
@@ -94,10 +129,15 @@ func (c *SetCommand) Execute(ctx *engine.CommandContext) error {
 
 		option = strings.ToUpper(option)
 
-		argReader, err := ctx.ReqReader.NextReader()
-		if err != nil || argReader == nil {
+		if argsProcessed >= nargs {
 			return ctx.RespWriter.WriteError("ERR syntax error")
 		}
+
+		argReader, err := ctx.ReqReader.NextReader()
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR syntax error")
+		}
+		argsProcessed++
 
 		switch option {
 		case "EX": // seconds
@@ -194,21 +234,27 @@ func (c *GetCommand) ModifiesData() bool {
 type DelCommand struct{}
 
 func (c *DelCommand) Execute(ctx *engine.CommandContext) error {
+	// Get the number of arguments first
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid command format")
+	}
+	
+	if nargs < 1 {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'del' command")
+	}
+
 	var keys []string
-	for {
+	for i := 0; i < nargs; i++ {
 		valueReader, err := ctx.ReqReader.NextReader()
-		if err != nil || valueReader == nil {
-			break
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR invalid key")
 		}
 		key, err := valueReader.ReadBulkString()
 		if err != nil {
 			return ctx.RespWriter.WriteError("ERR invalid key")
 		}
 		keys = append(keys, key)
-	}
-
-	if len(keys) == 0 {
-		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'del' command")
 	}
 
 	count := ctx.Database.Del(keys...)
@@ -236,21 +282,27 @@ func (c *DelCommand) ModifiesData() bool {
 type ExistsCommand struct{}
 
 func (c *ExistsCommand) Execute(ctx *engine.CommandContext) error {
+	// Get the number of arguments first
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid command format")
+	}
+	
+	if nargs < 1 {
+		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'exists' command")
+	}
+
 	var keys []string
-	for {
+	for i := 0; i < nargs; i++ {
 		valueReader, err := ctx.ReqReader.NextReader()
-		if err != nil || valueReader == nil {
-			break
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR invalid key")
 		}
 		key, err := valueReader.ReadBulkString()
 		if err != nil {
 			return ctx.RespWriter.WriteError("ERR invalid key")
 		}
 		keys = append(keys, key)
-	}
-
-	if len(keys) == 0 {
-		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'exists' command")
 	}
 
 	count := ctx.Database.Exists(keys...)

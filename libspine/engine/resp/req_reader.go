@@ -150,7 +150,7 @@ func (r *ReqReader) parseCommandAndArgs() error {
 	return nil
 }
 
-// NextArg returns a RESPReader for reading the next argument
+// NextReader returns a RESPReader for reading the next argument
 func (r *ReqReader) NextReader() (*RESPReader, error) {
 	// 如果 command 存在多个 args , 则可通过调用多次 next reader 来读取
 	// Ensure command and args are parsed first
@@ -162,6 +162,14 @@ func (r *ReqReader) NextReader() (*RESPReader, error) {
 	return &RESPReader{
 		reader: r.reader,
 	}, nil
+}
+
+// Reset resets the reader state for parsing a new command
+func (r *ReqReader) Reset() {
+	r.command = ""
+	r.nargs = 0
+	r.hash = 0
+	r.parseErr = nil
 }
 
 // readLine reads a line ending with \r\n

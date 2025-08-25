@@ -54,9 +54,6 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 		}
 	}
 
-	// 创建 RESP 请求读取器
-	reqReader := resp.NewReqReader(req)
-
 	// 初始化Metadata如果不存在
 	if ctx.ConnInfo.Metadata == nil {
 		ctx.ConnInfo.Metadata = make(map[string]interface{})
@@ -68,6 +65,9 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 
 	// 持续处理消息直到连接关闭
 	for {
+		// 为每个命令创建新的 RESP 请求读取器
+		reqReader := resp.NewReqReader(req)
+		
 		// 获取命令名称和参数数量（一次性解析）
 		command, nargs, err := reqReader.ParseCommand()
 		if err != nil {

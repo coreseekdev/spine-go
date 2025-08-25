@@ -229,3 +229,18 @@ func (c *RedisTestClient) TTL(key string) (int64, error) {
 	}
 	return 0, fmt.Errorf("unexpected response type for TTL")
 }
+
+// Expire 设置键的过期时间
+func (c *RedisTestClient) Expire(key string, seconds int64) error {
+	result, err := c.SendCommand("EXPIRE", key, fmt.Sprintf("%d", seconds))
+	if err != nil {
+		return err
+	}
+	if count, ok := result.(int64); ok {
+		if count == 1 {
+			return nil
+		}
+		return fmt.Errorf("key does not exist")
+	}
+	return fmt.Errorf("unexpected response type for EXPIRE")
+}

@@ -14,15 +14,15 @@ import (
 type CommandCategory string
 
 const (
-	CategoryRead      CommandCategory = "READ"
-	CategoryWrite     CommandCategory = "WRITE"
-	CategoryList      CommandCategory = "LIST"
-	CategorySet       CommandCategory = "SET"
-	CategoryHash      CommandCategory = "HASH"
-	CategoryString    CommandCategory = "STRING"
+	CategoryRead       CommandCategory = "READ"
+	CategoryWrite      CommandCategory = "WRITE"
+	CategoryList       CommandCategory = "LIST"
+	CategorySet        CommandCategory = "SET"
+	CategoryHash       CommandCategory = "HASH"
+	CategoryString     CommandCategory = "STRING"
 	CategoryConnection CommandCategory = "CONNECTION"
-	CategoryServer    CommandCategory = "SERVER"
-	CategoryGeneric   CommandCategory = "GENERIC"
+	CategoryServer     CommandCategory = "SERVER"
+	CategoryGeneric    CommandCategory = "GENERIC"
 )
 
 // ArgReadingMode defines how command arguments should be read
@@ -31,35 +31,35 @@ type ArgReadingMode int
 const (
 	// LazyArgReading indicates arguments should be read on-demand by the command handler
 	LazyArgReading ArgReadingMode = iota
-	
+
 	// PreReadAllArgs indicates all arguments should be pre-read before command execution
 	PreReadAllArgs
-	
+
 	// PreReadFirstNArgs indicates the first N arguments should be pre-read
 	PreReadFirstNArgs
 )
 
 // CommandInfo contains metadata about a command
 type CommandInfo struct {
-	Name          string            // Command name (uppercase)
-	Summary       string            // Brief description
-	Syntax        string            // Command syntax
-	Categories    []CommandCategory // Command categories
-	MinArgs       int               // Minimum number of arguments
-	MaxArgs       int               // Maximum number of arguments (-1 for unlimited)
-	ModifiesData  bool              // Whether this command modifies data
-	ArgReading    ArgReadingMode    // How arguments should be read (lazy, pre-read all, etc.)
-	PreReadNArgs  int               // Number of arguments to pre-read if ArgReading is PreReadFirstNArgs
+	Name         string            // Command name (uppercase)
+	Summary      string            // Brief description
+	Syntax       string            // Command syntax
+	Categories   []CommandCategory // Command categories
+	MinArgs      int               // Minimum number of arguments
+	MaxArgs      int               // Maximum number of arguments (-1 for unlimited)
+	ModifiesData bool              // Whether this command modifies data
+	ArgReading   ArgReadingMode    // How arguments should be read (lazy, pre-read all, etc.)
+	PreReadNArgs int               // Number of arguments to pre-read if ArgReading is PreReadFirstNArgs
 }
 
 // CommandHandler defines the interface for command handlers
 type CommandHandler interface {
 	// Execute executes the command
 	Execute(ctx *CommandContext) error
-	
+
 	// GetInfo returns command metadata
 	GetInfo() *CommandInfo
-	
+
 	// ModifiesData returns true if this command modifies data
 	ModifiesData() bool
 }
@@ -76,10 +76,10 @@ type CommandContext struct {
 
 // CommandRegistry manages command registration and lookup
 type CommandRegistry struct {
-	mu           sync.RWMutex
-	commands     map[string]CommandHandler // command name -> handler
+	mu            sync.RWMutex
+	commands      map[string]CommandHandler // command name -> handler
 	commandHashes map[uint32]CommandHandler // command hash -> handler
-	aliases      map[string]string         // alias -> canonical name
+	aliases       map[string]string         // alias -> canonical name
 }
 
 // NewCommandRegistry creates a new command registry
@@ -108,27 +108,12 @@ func (r *CommandRegistry) Register(handler CommandHandler) error {
 
 	// Register by name
 	r.commands[cmdName] = handler
-	
+
 	// Register by hash
 	cmdHash := hashString(cmdName)
 	r.commandHashes[cmdHash] = handler
 
 	return nil
-}
-
-// RegisterCommand registers a command handler with explicit name
-func (r *CommandRegistry) RegisterCommand(name string, handler CommandHandler) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	cmdName := strings.ToUpper(name)
-	
-	// Register by name
-	r.commands[cmdName] = handler
-	
-	// Register by hash
-	cmdHash := hashString(cmdName)
-	r.commandHashes[cmdHash] = handler
 }
 
 // RegisterAlias registers a command alias
@@ -138,10 +123,10 @@ func (r *CommandRegistry) RegisterAlias(alias, canonical string) {
 
 	aliasUpper := strings.ToUpper(alias)
 	canonicalUpper := strings.ToUpper(canonical)
-	
+
 	// Register alias by name
 	r.aliases[aliasUpper] = canonicalUpper
-	
+
 	// Register alias by hash if the canonical command exists
 	if handler, exists := r.commands[canonicalUpper]; exists {
 		aliasHash := hashString(aliasUpper)

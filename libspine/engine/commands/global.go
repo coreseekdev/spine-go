@@ -8,10 +8,6 @@ import (
 	"spine-go/libspine/engine"
 )
 
-
-
-
-
 // RegisterGlobalCommands registers global Redis commands
 func RegisterGlobalCommands(registry *engine.CommandRegistry) error {
 	// HELLO command
@@ -48,7 +44,7 @@ func RegisterGlobalCommands(registry *engine.CommandRegistry) error {
 
 	// HELP 命令
 	helpCmd := &HelpCommand{}
-	registry.RegisterCommand("HELP", helpCmd)
+	registry.Register(helpCmd)
 
 	return nil
 }
@@ -59,13 +55,13 @@ type HelloCommand struct{}
 func (c *HelloCommand) Execute(ctx *engine.CommandContext) error {
 	// HELLO command response
 	response := map[string]interface{}{
-		"server":      "spine-redis",
-		"version":     "1.0.0",
-		"proto":       3, // RESP3
-		"id":          1,
-		"mode":        "standalone",
-		"role":        "master",
-		"modules":     []string{},
+		"server":  "spine-redis",
+		"version": "1.0.0",
+		"proto":   3, // RESP3
+		"id":      1,
+		"mode":    "standalone",
+		"role":    "master",
+		"modules": []string{},
 	}
 
 	// Write RESP3 map response
@@ -74,12 +70,12 @@ func (c *HelloCommand) Execute(ctx *engine.CommandContext) error {
 
 func (c *HelloCommand) GetInfo() *engine.CommandInfo {
 	return &engine.CommandInfo{
-		Name:        "HELLO",
-		Summary:     "Handshake with Redis",
-		Syntax:      "HELLO [protover [AUTH username password] [SETNAME clientname]]",
-		Categories:  []engine.CommandCategory{engine.CategoryConnection},
-		MinArgs:     0,
-		MaxArgs:     -1,
+		Name:         "HELLO",
+		Summary:      "Handshake with Redis",
+		Syntax:       "HELLO [protover [AUTH username password] [SETNAME clientname]]",
+		Categories:   []engine.CommandCategory{engine.CategoryConnection},
+		MinArgs:      0,
+		MaxArgs:      -1,
 		ModifiesData: false,
 	}
 }
@@ -97,41 +93,41 @@ func (c *SelectCommand) Execute(ctx *engine.CommandContext) error {
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'select' command")
 	}
-	
+
 	// Read the database index as a string
 	dbStr, err := valueReader.ReadBulkString()
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR invalid DB index")
 	}
-	
+
 	// Convert to integer
 	dbNum, err := strconv.Atoi(dbStr)
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR invalid DB index")
 	}
-	
+
 	// Validate database number (Redis typically supports 0-15)
 	if dbNum < 0 || dbNum > 15 {
 		return ctx.RespWriter.WriteError(fmt.Sprintf("ERR invalid DB index: %d", dbNum))
 	}
-	
+
 	// Set the database in the context
 	ctx.Database = ctx.Engine.GetDatabase(dbNum)
 	if ctx.Database == nil {
 		return ctx.RespWriter.WriteError(fmt.Sprintf("ERR invalid DB index: %d", dbNum))
 	}
-	
+
 	return ctx.RespWriter.WriteSimpleString("OK")
 }
 
 func (c *SelectCommand) GetInfo() *engine.CommandInfo {
 	return &engine.CommandInfo{
-		Name:        "SELECT",
-		Summary:     "Change the selected database",
-		Syntax:      "SELECT index",
-		Categories:  []engine.CommandCategory{engine.CategoryConnection},
-		MinArgs:     1,
-		MaxArgs:     1,
+		Name:         "SELECT",
+		Summary:      "Change the selected database",
+		Syntax:       "SELECT index",
+		Categories:   []engine.CommandCategory{engine.CategoryConnection},
+		MinArgs:      1,
+		MaxArgs:      1,
 		ModifiesData: false,
 	}
 }
@@ -144,36 +140,44 @@ func (c *SelectCommand) ModifiesData() bool {
 type PingCommand struct{}
 
 func (c *PingCommand) Execute(ctx *engine.CommandContext) error {
-	// Check if there are any arguments
-	valueReader, err := ctx.ReqReader.NextReader()
+	// Get the number of arguments
+	nargs, err := ctx.ReqReader.NArgs()
 	if err != nil {
+		return ctx.RespWriter.WriteError("ERR invalid command format")
+	}
+
+	// PING command can have 0 or 1 argument
+	if nargs == 0 {
 		// No arguments, return PONG
 		return ctx.RespWriter.WriteSimpleString("PONG")
-	}
-	
-	// Read the message argument
-	message, err := valueReader.ReadBulkString()
-	if err != nil {
-		return ctx.RespWriter.WriteError("ERR invalid argument")
-	}
-	
-	// Check for additional arguments (should be none)
-	_, err = ctx.ReqReader.NextReader()
-	if err == nil {
+	} else if nargs == 1 {
+		// Get the next argument reader
+		valueReader, err := ctx.ReqReader.NextReader()
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR invalid argument")
+		}
+
+		// Read the message argument
+		message, err := valueReader.ReadBulkString()
+		if err != nil {
+			return ctx.RespWriter.WriteError("ERR invalid argument")
+		}
+
+		return ctx.RespWriter.WriteBulkString(message)
+	} else {
+		// Too many arguments
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'ping' command")
 	}
-	
-	return ctx.RespWriter.WriteBulkString(message)
 }
 
 func (c *PingCommand) GetInfo() *engine.CommandInfo {
 	return &engine.CommandInfo{
-		Name:        "PING",
-		Summary:     "Ping the server",
-		Syntax:      "PING [message]",
-		Categories:  []engine.CommandCategory{engine.CategoryConnection},
-		MinArgs:     0,
-		MaxArgs:     1,
+		Name:         "PING",
+		Summary:      "Ping the server",
+		Syntax:       "PING [message]",
+		Categories:   []engine.CommandCategory{engine.CategoryConnection},
+		MinArgs:      0,
+		MaxArgs:      1,
 		ModifiesData: false,
 	}
 }
@@ -191,30 +195,30 @@ func (c *EchoCommand) Execute(ctx *engine.CommandContext) error {
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'echo' command")
 	}
-	
+
 	// Read the message
 	message, err := valueReader.ReadBulkString()
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR invalid argument")
 	}
-	
+
 	// Check for additional arguments (should be none)
 	_, err = ctx.ReqReader.NextReader()
 	if err == nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'echo' command")
 	}
-	
+
 	return ctx.RespWriter.WriteBulkString(message)
 }
 
 func (c *EchoCommand) GetInfo() *engine.CommandInfo {
 	return &engine.CommandInfo{
-		Name:        "ECHO",
-		Summary:     "Echo the given string",
-		Syntax:      "ECHO message",
-		Categories:  []engine.CommandCategory{engine.CategoryConnection},
-		MinArgs:     1,
-		MaxArgs:     1,
+		Name:         "ECHO",
+		Summary:      "Echo the given string",
+		Syntax:       "ECHO message",
+		Categories:   []engine.CommandCategory{engine.CategoryConnection},
+		MinArgs:      1,
+		MaxArgs:      1,
 		ModifiesData: false,
 	}
 }
@@ -238,12 +242,12 @@ func (c *QuitCommand) Execute(ctx *engine.CommandContext) error {
 
 func (c *QuitCommand) GetInfo() *engine.CommandInfo {
 	return &engine.CommandInfo{
-		Name:        "QUIT",
-		Summary:     "Close the connection",
-		Syntax:      "QUIT",
-		Categories:  []engine.CommandCategory{engine.CategoryConnection},
-		MinArgs:     0,
-		MaxArgs:     0,
+		Name:         "QUIT",
+		Summary:      "Close the connection",
+		Syntax:       "QUIT",
+		Categories:   []engine.CommandCategory{engine.CategoryConnection},
+		MinArgs:      0,
+		MaxArgs:      0,
 		ModifiesData: false,
 	}
 }
@@ -264,10 +268,10 @@ func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
 		if err != nil {
 			return err
 		}
-		
+
 		// 获取所有注册的命令
 		commands := ctx.Engine.GetCommandRegistry().ListCommands()
-		
+
 		// 按类别组织命令
 		categories := map[engine.CommandCategory][]string{
 			engine.CategoryConnection: {},
@@ -285,7 +289,7 @@ func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
 				categories[category] = append(categories[category], cmdName)
 			}
 		}
-		
+
 		// 显示每个类别的命令
 		for category, cmdNames := range categories {
 			err = ctx.RespWriter.WriteBulkString(fmt.Sprintf("\n%s:", category))
@@ -301,7 +305,7 @@ func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
 				}
 			}
 		}
-		
+
 		return ctx.RespWriter.WriteBulkString("\nUse HELP <command> for detailed information about a specific command.")
 	} else {
 		// 显示特定命令的详细帮助
@@ -327,19 +331,19 @@ func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
 		if err != nil {
 			return err
 		}
-		
+
 		return nil
 	}
 }
 
 func (cmd *HelpCommand) GetInfo() *engine.CommandInfo {
 	return &engine.CommandInfo{
-		Name:        "HELP",
-		Summary:     "Get help about Redis commands.",
-		Syntax:      "HELP [command]",
-		Categories:  []engine.CommandCategory{engine.CategoryConnection},
-		MinArgs:     0,
-		MaxArgs:     1,
+		Name:         "HELP",
+		Summary:      "Get help about Redis commands.",
+		Syntax:       "HELP [command]",
+		Categories:   []engine.CommandCategory{engine.CategoryConnection},
+		MinArgs:      0,
+		MaxArgs:      1,
 		ModifiesData: false,
 	}
 }
