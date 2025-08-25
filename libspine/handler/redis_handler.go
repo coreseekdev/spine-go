@@ -67,7 +67,7 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 	for {
 		// 为每个命令创建新的 RESP 请求读取器
 		reqReader := resp.NewReqReader(req)
-		
+
 		// 获取命令名称和参数数量（一次性解析）
 		command, nargs, err := reqReader.ParseCommand()
 		if err != nil {
@@ -86,8 +86,8 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 
 		// 处理特殊命令，如 SELECT
 		if command == "SELECT" && nargs == 1 {
-			// 获取参数解析器
-			valueReader, err := reqReader.NextReader()
+			// 获取参数值
+			dbValue, err := reqReader.NextValue()
 			if err != nil {
 				respWriter := resp.NewRESPWriter(res)
 				respWriter.WriteError(fmt.Sprintf("ERR %v", err))
@@ -95,10 +95,10 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 			}
 
 			// 读取数据库编号
-			dbStr, err := valueReader.ReadBulkString()
-			if err != nil {
+			dbStr, ok := dbValue.AsString()
+			if !ok {
 				respWriter := resp.NewRESPWriter(res)
-				respWriter.WriteError(fmt.Sprintf("ERR %v", err))
+				respWriter.WriteError("ERR invalid DB index")
 				continue
 			}
 

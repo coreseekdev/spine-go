@@ -89,19 +89,18 @@ type SelectCommand struct{}
 
 func (c *SelectCommand) Execute(ctx *engine.CommandContext) error {
 	// Read the database index argument
-	valueReader, err := ctx.ReqReader.NextReader()
+	dbValue, err := ctx.ReqReader.NextValue()
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'select' command")
 	}
 
-	// Read the database index as a string
-	dbStr, err := valueReader.ReadBulkString()
-	if err != nil {
-		return ctx.RespWriter.WriteError("ERR invalid DB index")
+	dbIndexStr, ok := dbValue.AsString()
+	if !ok {
+		return ctx.RespWriter.WriteError("ERR invalid database index")
 	}
 
 	// Convert to integer
-	dbNum, err := strconv.Atoi(dbStr)
+	dbNum, err := strconv.Atoi(dbIndexStr)
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR invalid DB index")
 	}
@@ -191,19 +190,18 @@ type EchoCommand struct{}
 
 func (c *EchoCommand) Execute(ctx *engine.CommandContext) error {
 	// Read the message argument
-	valueReader, err := ctx.ReqReader.NextReader()
+	messageValue, err := ctx.ReqReader.NextValue()
 	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'echo' command")
 	}
 
-	// Read the message
-	message, err := valueReader.ReadBulkString()
-	if err != nil {
-		return ctx.RespWriter.WriteError("ERR invalid argument")
+	message, ok := messageValue.AsString()
+	if !ok {
+		return ctx.RespWriter.WriteError("ERR invalid message")
 	}
 
 	// Check for additional arguments (should be none)
-	_, err = ctx.ReqReader.NextReader()
+	_, err = ctx.ReqReader.NextValue()
 	if err == nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'echo' command")
 	}
@@ -261,7 +259,7 @@ type HelpCommand struct{}
 
 func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
 	// Try to read an argument
-	valueReader, err := ctx.ReqReader.NextReader()
+	cmdValue, err := ctx.ReqReader.NextValue()
 	if err != nil {
 		// 如果没有指定命令，显示所有命令的帮助
 		err := ctx.RespWriter.WriteBulkString("Redis commands help:")
@@ -309,8 +307,8 @@ func (cmd *HelpCommand) Execute(ctx *engine.CommandContext) error {
 		return ctx.RespWriter.WriteBulkString("\nUse HELP <command> for detailed information about a specific command.")
 	} else {
 		// 显示特定命令的详细帮助
-		cmdName, err := valueReader.ReadBulkString()
-		if err != nil {
+		cmdName, ok := cmdValue.AsString()
+		if !ok {
 			return ctx.RespWriter.WriteError("ERR invalid command name")
 		}
 		cmdName = strings.ToUpper(cmdName)

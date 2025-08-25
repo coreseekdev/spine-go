@@ -324,13 +324,13 @@ func (c *ExistsCommand) ModifiesData() bool {
 type TypeCommand struct{}
 
 func (c *TypeCommand) Execute(ctx *engine.CommandContext) error {
-	valueReader, err := ctx.ReqReader.NextReader()
-	if err != nil || valueReader == nil {
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'type' command")
 	}
 
-	key, err := valueReader.ReadBulkString()
-	if err != nil {
+	key, ok := keyValue.AsString()
+	if !ok {
 		return ctx.RespWriter.WriteError("ERR invalid key")
 	}
 	valueType, exists := ctx.Database.Type(key)
@@ -380,24 +380,24 @@ func (c *TypeCommand) ModifiesData() bool {
 type ExpireCommand struct{}
 
 func (c *ExpireCommand) Execute(ctx *engine.CommandContext) error {
-	keyReader, err := ctx.ReqReader.NextReader()
-	if err != nil || keyReader == nil {
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'expire' command")
 	}
 
-	key, err := keyReader.ReadBulkString()
-	if err != nil {
+	key, ok := keyValue.AsString()
+	if !ok {
 		return ctx.RespWriter.WriteError("ERR invalid key")
 	}
 
-	secondsReader, err := ctx.ReqReader.NextReader()
-	if err != nil || secondsReader == nil {
+	secondsValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'expire' command")
 	}
 
-	secondsStr, err := secondsReader.ReadBulkString()
-	if err != nil {
-		return ctx.RespWriter.WriteError("ERR invalid seconds value")
+	secondsStr, ok := secondsValue.AsString()
+	if !ok {
+		return ctx.RespWriter.WriteError("ERR invalid seconds")
 	}
 
 	seconds, err := strconv.ParseInt(secondsStr, 10, 64)
@@ -435,13 +435,13 @@ func (c *ExpireCommand) ModifiesData() bool {
 type TTLCommand struct{}
 
 func (c *TTLCommand) Execute(ctx *engine.CommandContext) error {
-	valueReader, err := ctx.ReqReader.NextReader()
-	if err != nil || valueReader == nil {
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'ttl' command")
 	}
 
-	key, err := valueReader.ReadBulkString()
-	if err != nil {
+	key, ok := keyValue.AsString()
+	if !ok {
 		return ctx.RespWriter.WriteError("ERR invalid key")
 	}
 	ttl, exists := ctx.Database.TTL(key)
@@ -477,13 +477,13 @@ func (c *TTLCommand) ModifiesData() bool {
 type KeysCommand struct{}
 
 func (c *KeysCommand) Execute(ctx *engine.CommandContext) error {
-	valueReader, err := ctx.ReqReader.NextReader()
-	if err != nil || valueReader == nil {
+	patternValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
 		return ctx.RespWriter.WriteError("ERR wrong number of arguments for 'keys' command")
 	}
 
-	pattern, err := valueReader.ReadBulkString()
-	if err != nil {
+	pattern, ok := patternValue.AsString()
+	if !ok {
 		return ctx.RespWriter.WriteError("ERR invalid pattern")
 	}
 	keys := ctx.Database.Keys(pattern)
