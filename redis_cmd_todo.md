@@ -30,7 +30,7 @@ Based on Valkey documentation (https://valkey.io/commands/) and current codebase
 - [x] SETRANGE
 - [x] STRLEN
 
-#### Missing Commands:
+#### Recently Completed Commands:
 - [x] DELIFEQ
 - [x] LCS
 - [x] SUBSTR
@@ -55,9 +55,9 @@ Based on Valkey documentation (https://valkey.io/commands/) and current codebase
 - [x] HSTRLEN
 - [x] HVALS
 
-#### Missing Commands:
-- [ ] HRANDFIELD
-- [ ] HSCAN
+#### Recently Completed Commands:
+- [x] HRANDFIELD
+- [x] HSCAN
 
 ### ✅ List Operations (Mostly Complete)
 **File**: `libspine/engine/commands/list.go`
@@ -82,10 +82,10 @@ Based on Valkey documentation (https://valkey.io/commands/) and current codebase
 - [x] RPUSH
 - [x] RPUSHX
 
-#### Missing Commands:
-- [ ] LMOVE
-- [ ] LMPOP
-- [ ] LPOS
+#### Recently Completed Commands:
+- [x] LMOVE
+- [x] LMPOP
+- [x] LPOS
 
 ### ✅ Set Operations (Mostly Complete)
 **File**: `libspine/engine/commands/set.go`
@@ -107,9 +107,9 @@ Based on Valkey documentation (https://valkey.io/commands/) and current codebase
 - [x] SUNION
 - [x] SUNIONSTORE
 
-#### Missing Commands:
-- [ ] SMISMEMBER
-- [ ] SSCAN
+#### Recently Completed Commands:
+- [x] SMISMEMBER
+- [x] SSCAN
 
 ### ✅ Sorted Set Operations (Mostly Complete)
 **File**: `libspine/engine/commands/zset.go`
@@ -122,6 +122,7 @@ Based on Valkey documentation (https://valkey.io/commands/) and current codebase
 - [x] ZINCRBY
 - [x] ZINTERSTORE
 - [x] ZLEXCOUNT
+- [x] ZMSCORE
 - [x] ZPOPMAX
 - [x] ZPOPMIN
 - [x] ZRANGE
@@ -139,15 +140,38 @@ Based on Valkey documentation (https://valkey.io/commands/) and current codebase
 - [x] ZSCORE
 - [x] ZUNIONSTORE
 
-#### Missing Commands:
-- [ ] ZDIFF
-- [ ] ZDIFFSTORE
-- [ ] ZINTER
-- [ ] ZMPOP
-- [ ] ZMSCORE
-- [ ] ZRANDMEMBER
-- [ ] ZRANGESTORE
-- [ ] ZSCAN
+#### Recently Completed Commands:
+- [x] ZRANK - Get rank of member in sorted set
+- [x] ZREVRANK - Get reverse rank of member in sorted set
+- [x] ZREVRANGE - Get range of members with scores ordered high to low
+- [x] ZRANGEBYSCORE - Get range of members by score
+- [x] ZREVRANGEBYSCORE - Get reverse range of members by score
+- [x] ZCOUNT - Count members within score range
+- [x] ZINCRBY - Increment member score
+- [x] ZREMRANGEBYRANK - Remove members by rank range
+- [x] ZREMRANGEBYSCORE - Remove members by score range
+- [x] ZPOPMIN - Pop members with lowest scores
+- [x] ZPOPMAX - Pop members with highest scores
+- [x] ZMSCORE - Get scores of multiple members
+
+#### Recently Completed Commands (Set Operations & Utilities):
+- [x] ZINTER - Intersect multiple sorted sets
+- [x] ZINTERSTORE - Intersect multiple sorted sets and store result
+- [x] ZUNION - Add multiple sorted sets  
+- [x] ZUNIONSTORE - Add multiple sorted sets and store result
+- [x] ZSCAN - Incrementally iterate sorted set elements
+- [x] ZRANDMEMBER - Get random members from sorted set
+- [x] BZPOPMIN - Blocking pop minimum elements (simplified non-blocking)
+- [x] BZPOPMAX - Blocking pop maximum elements (simplified non-blocking)
+
+#### Recently Completed Commands (Advanced Features):
+- [x] ZDIFF - Subtract multiple sorted sets
+- [x] ZDIFFSTORE - Subtract multiple sorted sets and store result
+- [x] ZMPOP - Remove and return members with scores from multiple sorted sets
+- [x] ZRANGESTORE - Store a range of members from sorted set into another key
+
+#### All ZSet Commands Now Implemented ✅
+The ZSet category is now complete with all major Redis sorted set operations implemented.
 
 ### ✅ Pub/Sub Operations (Complete)
 **File**: `libspine/engine/commands/pubsub.go`
@@ -203,17 +227,20 @@ Based on Valkey documentation (https://valkey.io/commands/) and current codebase
 - [x] TYPE
 - [x] WAIT
 
-#### Missing Commands:
-- [ ] COPY
-- [ ] DUMP
-- [ ] EXPIRETIME
-- [ ] MIGRATE
-- [ ] MOVE
-- [ ] OBJECT
-- [ ] PEXPIRETIME
-- [ ] RESTORE
-- [ ] TOUCH
-- [ ] UNLINK
+#### Recently Completed Commands:
+- [x] COPY - Copy a key
+- [x] DUMP - Return a serialized version of the value stored at key
+- [x] EXPIRETIME - Get the expiration Unix timestamp for a key
+- [x] MIGRATE - Atomically transfer a key from a Redis instance to another one
+- [x] MOVE - Move a key to another database
+- [x] OBJECT - Inspect the internals of Redis objects
+- [x] PEXPIRETIME - Get the expiration Unix timestamp for a key in milliseconds
+- [x] RESTORE - Create a key using the provided serialized value
+- [x] TOUCH - Alters the last access time of a key(s)
+- [x] UNLINK - Delete a key asynchronously in another thread
+
+#### All Generic Commands Now Implemented ✅
+The Generic category is now complete with all major Redis generic operations implemented.
 
 ### ✅ Server Management (Partially Implemented)
 **File**: `libspine/engine/commands/server.go`
@@ -318,18 +345,21 @@ Based on Valkey documentation (https://valkey.io/commands/) and current codebase
 - [ ] PFCOUNT
 - [ ] PFMERGE
 
-### ❌ Bitmap Operations (Not Implemented)
-**Target File**: `libspine/engine/commands/bitmap.go`
-**Target Storage**: `libspine/engine/storage/bitmap_storage.go`
+### ✅ Bitmap Operations (Complete)
+**File**: `libspine/engine/commands/bitmap.go`
+**Storage**: `libspine/engine/storage/bitmap_storage.go`
 
-#### Commands to Implement:
-- [ ] BITCOUNT
-- [ ] BITFIELD
-- [ ] BITFIELD_RO
-- [ ] BITOP
-- [ ] BITPOS
-- [ ] GETBIT
-- [ ] SETBIT
+#### Implemented Commands:
+- [x] BITCOUNT - Count set bits in a string
+- [x] BITFIELD - Perform arbitrary bitfield integer operations on strings
+- [x] BITFIELD_RO - Perform arbitrary bitfield integer operations on strings (read-only)
+- [x] BITOP - Perform bitwise operations between strings
+- [x] BITPOS - Find first bit set or clear in a string
+- [x] GETBIT - Returns the bit value at offset in the string value stored at key
+- [x] SETBIT - Sets or clears the bit at offset in the string value stored at key
+
+#### All Bitmap Commands Now Implemented ✅
+The Bitmap category is now complete with full Redis bitmap operations support including storage interface.
 
 ### ❌ Scripting and Functions (Not Implemented)
 **Target File**: `libspine/engine/commands/script.go`
