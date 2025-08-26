@@ -44,5 +44,25 @@ func RegisterAllCommands(registry *engine.CommandRegistry) error {
 		return err
 	}
 
+	// Register connection commands
+	if err := RegisterConnectionCommands(registry); err != nil {
+		return err
+	}
+
+	// Register server commands
+	if err := RegisterServerCommands(registry); err != nil {
+		return err
+	}
+
+	// Register transaction commands
+	if err := RegisterTransactionCommands(registry); err != nil {
+		return err
+	}
+
+	// Register generic commands
+	if err := RegisterGenericCommands(registry); err != nil {
+		return err
+	}
+
 	return nil
 }

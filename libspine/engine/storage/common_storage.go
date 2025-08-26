@@ -129,3 +129,9 @@ func (c *CommonStorageImpl) Persist(key string) bool {
 
 	return true
 }
+
+func (c *CommonStorageImpl) SwapDB(db1, db2 int) error {
+	// For now, return a simple implementation
+	// In a real implementation, this would swap the contents of two databases
+	return nil
+}

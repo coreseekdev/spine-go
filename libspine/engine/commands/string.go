@@ -32,6 +32,9 @@ func RegisterStringCommands(registry *engine.CommandRegistry) error {
 		&DecrCommand{},
 		&DecrByCommand{},
 		&MSetnxCommand{},
+		&SubstrCommand{},
+		&LCSCommand{},
+		&DelIfEqCommand{},
 	}
 
 	for _, cmd := range commands {
@@ -765,3 +768,276 @@ type MSetnxCommand struct{}
 func (c *MSetnxCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
 func (c *MSetnxCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "MSETNX", Categories: []engine.CommandCategory{engine.CategoryString}} }
 func (c *MSetnxCommand) ModifiesData() bool { return true }
+
+// SubstrCommand implements the SUBSTR command
+type SubstrCommand struct{}
+
+func (c *SubstrCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 3 {
+		return fmt.Errorf("wrong number of arguments for 'substr' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	startValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	startStr, ok := startValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid start index")
+	}
+	start, err := strconv.Atoi(startStr)
+	if err != nil {
+		return fmt.Errorf("invalid start index")
+	}
+
+	endValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	endStr, ok := endValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid end index")
+	}
+	end, err := strconv.Atoi(endStr)
+	if err != nil {
+		return fmt.Errorf("invalid end index")
+	}
+
+	// Get the value
+	value, exists := ctx.Database.Get(key)
+	if !exists {
+		return ctx.RespWriter.WriteBulkString("")
+	}
+
+	// Handle negative indices
+	length := len(value)
+	if start < 0 {
+		start = length + start
+	}
+	if end < 0 {
+		end = length + end
+	}
+
+	// Bounds checking
+	if start < 0 {
+		start = 0
+	}
+	if end >= length {
+		end = length - 1
+	}
+	if start > end || start >= length {
+		return ctx.RespWriter.WriteBulkString("")
+	}
+
+	substring := value[start : end+1]
+	return ctx.RespWriter.WriteBulkString(substring)
+}
+
+func (c *SubstrCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "SUBSTR",
+		Summary:      "Get a substring of the string stored at a key",
+		Syntax:       "SUBSTR key start end",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      3,
+		MaxArgs:      3,
+		ModifiesData: false,
+	}
+}
+
+func (c *SubstrCommand) ModifiesData() bool {
+	return false
+}
+
+// LCSCommand implements the LCS command (Longest Common Subsequence)
+type LCSCommand struct{}
+
+func (c *LCSCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs < 2 {
+		return fmt.Errorf("wrong number of arguments for 'lcs' command")
+	}
+
+	key1Value, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key1, ok := key1Value.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key1")
+	}
+
+	key2Value, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key2, ok := key2Value.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key2")
+	}
+
+	// Get values
+	value1, exists1 := ctx.Database.Get(key1)
+	if !exists1 {
+		value1 = ""
+	}
+
+	value2, exists2 := ctx.Database.Get(key2)
+	if !exists2 {
+		value2 = ""
+	}
+
+	// Simple LCS implementation
+	lcs := longestCommonSubsequence(value1, value2)
+	return ctx.RespWriter.WriteBulkString(lcs)
+}
+
+func (c *LCSCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "LCS",
+		Summary:      "Find the longest common subsequence between two strings",
+		Syntax:       "LCS key1 key2 [IDX] [LEN] [WITHMATCHLEN]",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      2,
+		MaxArgs:      -1,
+		ModifiesData: false,
+	}
+}
+
+func (c *LCSCommand) ModifiesData() bool {
+	return false
+}
+
+// DelIfEqCommand implements the DELIFEQ command
+type DelIfEqCommand struct{}
+
+func (c *DelIfEqCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 2 {
+		return fmt.Errorf("wrong number of arguments for 'delifeq' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	expectedValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	expected, ok := expectedValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid expected value")
+	}
+
+	// Get current value
+	currentValue, exists := ctx.Database.Get(key)
+	if !exists {
+		return ctx.RespWriter.WriteInteger(0)
+	}
+
+	// Check if values match
+	if currentValue == expected {
+		// Delete the key
+		ctx.Database.Del(key)
+		return ctx.RespWriter.WriteInteger(1)
+	}
+
+	return ctx.RespWriter.WriteInteger(0)
+}
+
+func (c *DelIfEqCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "DELIFEQ",
+		Summary:      "Delete a key only if it equals the given value",
+		Syntax:       "DELIFEQ key value",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      2,
+		MaxArgs:      2,
+		ModifiesData: true,
+	}
+}
+
+func (c *DelIfEqCommand) ModifiesData() bool {
+	return true
+}
+
+// Helper function for LCS
+func longestCommonSubsequence(s1, s2 string) string {
+	m, n := len(s1), len(s2)
+	if m == 0 || n == 0 {
+		return ""
+	}
+
+	// Create DP table
+	dp := make([][]int, m+1)
+	for i := range dp {
+		dp[i] = make([]int, n+1)
+	}
+
+	// Fill DP table
+	for i := 1; i <= m; i++ {
+		for j := 1; j <= n; j++ {
+			if s1[i-1] == s2[j-1] {
+				dp[i][j] = dp[i-1][j-1] + 1
+			} else {
+				if dp[i-1][j] > dp[i][j-1] {
+					dp[i][j] = dp[i-1][j]
+				} else {
+					dp[i][j] = dp[i][j-1]
+				}
+			}
+		}
+	}
+
+	// Reconstruct LCS
+	var result strings.Builder
+	i, j := m, n
+	for i > 0 && j > 0 {
+		if s1[i-1] == s2[j-1] {
+			result.WriteByte(s1[i-1])
+			i--
+			j--
+		} else if dp[i-1][j] > dp[i][j-1] {
+			i--
+		} else {
+			j--
+		}
+	}
+
+	// Reverse the result
+	lcs := result.String()
+	runes := []rune(lcs)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+
+	return string(runes)
+}

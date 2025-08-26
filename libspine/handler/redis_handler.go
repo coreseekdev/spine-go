@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"path/filepath"
-	"strconv"
 
 	"spine-go/libspine/engine"
 	"spine-go/libspine/engine/commands"
@@ -87,53 +86,6 @@ func (h *RedisHandler) Handle(ctx *transport.Context, req transport.Reader, res 
 		}
 
 		log.Printf("Received Redis command: %s (args: %d)", command, nargs)
-
-		// 处理特殊命令，如 SELECT
-		if command == "SELECT" && nargs == 1 {
-			// 获取参数值
-			dbValue, err := reqReader.NextValue()
-			if err != nil {
-				respWriter := resp.NewRESPWriter(res)
-				respWriter.WriteError(fmt.Sprintf("ERR %v", err))
-				continue
-			}
-
-			// 读取数据库编号
-			dbStr, ok := dbValue.AsString()
-			if !ok {
-				respWriter := resp.NewRESPWriter(res)
-				respWriter.WriteError("ERR invalid DB index")
-				continue
-			}
-
-			// 解析数据库编号
-			dbNum, err := strconv.Atoi(dbStr)
-			if err != nil {
-				respWriter := resp.NewRESPWriter(res)
-				respWriter.WriteError(fmt.Sprintf("ERR invalid DB index: %s", dbStr))
-				continue
-			}
-
-			// 验证数据库编号范围（Redis默认支持0-15）
-			if dbNum < 0 || dbNum > 15 {
-				respWriter := resp.NewRESPWriter(res)
-				respWriter.WriteError(fmt.Sprintf("ERR invalid DB index: %d", dbNum))
-				continue
-			}
-
-			// 初始化Metadata如果不存在
-			if ctx.ConnInfo.Metadata == nil {
-				ctx.ConnInfo.Metadata = make(map[string]interface{})
-			}
-
-			// 在连接的Metadata中存储选择的数据库编号
-			ctx.ConnInfo.Metadata[transport.MetadataSelectedDB] = dbNum
-
-			// 返回成功响应
-			respWriter := resp.NewRESPWriter(res)
-			respWriter.WriteSimpleString("OK")
-			continue
-		}
 
 		// 计算命令哈希值
 		cmdHash := hashString(command)

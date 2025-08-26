@@ -81,4 +81,5 @@ type CommonStorage interface {
 	Expire(key string, expiration time.Duration) bool
 	ExpireAt(key string, timestamp time.Time) bool
 	Persist(key string) bool
+	SwapDB(db1, db2 int) error
 }
