@@ -23,6 +23,7 @@ const (
 	CategoryString     CommandCategory = "STRING"
 	CategoryZSet       CommandCategory = "ZSET"
 	CategoryBitmap     CommandCategory = "BITMAP"
+	CategoryStream     CommandCategory = "STREAM"
 	CategoryConnection CommandCategory = "CONNECTION"
 	CategoryServer     CommandCategory = "SERVER"
 	CategoryGeneric    CommandCategory = "GENERIC"
@@ -76,6 +77,7 @@ type CommandContext struct {
 	RespWriter    *resp.RESPWriter     // RESP response writer
 	Database      *storage.Database    // Current database
 	TransportCtx  *transport.Context   // Transport context
+	ClientID      string               // Client identifier for blocking operations
 }
 
 // CommandRegistry manages command registration and lookup

@@ -1,6 +1,11 @@
 package storage
 
-import "time"
+import (
+	"context"
+	"time"
+	
+	"spine-go/libspine/engine/storage/stream"
+)
 
 // StringStorage interface for string operations
 type StringStorage interface {
@@ -79,6 +84,30 @@ type BitmapStorage interface {
 	BitCount(key string, start, end int64) (int64, error)
 	BitPos(key string, bit int, start, end int64) (int64, error)
 	BitOp(operation string, destkey string, keys []string) (int64, error)
+}
+
+// StreamStorage interface for stream operations
+type StreamStorage interface {
+	XAdd(key string, id stream.StreamID, fields map[string]string, maxLen int64, exact bool) (stream.StreamID, error)
+	XDel(key string, ids []stream.StreamID) (int64, error)
+	XLen(key string) (int64, error)
+	XRange(key string, start, end stream.StreamID, count int64) ([]*stream.StreamEntry, error)
+	XRevRange(key string, start, end stream.StreamID, count int64) ([]*stream.StreamEntry, error)
+	XTrim(key string, options stream.TrimOptions) (int64, error)
+	XRead(ctx context.Context, clientID string, streams []string, ids []stream.StreamID, count int64, timeout time.Duration) (*stream.ReadResult, error)
+	XReadGroup(ctx context.Context, clientID string, groupName, consumerName string, streams []string, ids []stream.StreamID, count int64, timeout time.Duration, noAck bool) (*stream.ReadResult, error)
+	XGroupCreate(key, groupName string, id stream.StreamID, mkStream bool) error
+	XGroupCreateConsumer(key, groupName, consumerName string) error
+	XGroupDelConsumer(key, groupName, consumerName string) (int64, error)
+	XGroupDestroy(key, groupName string) error
+	XGroupSetID(key, groupName string, id stream.StreamID) error
+	XInfoStream(key string) (*stream.StreamInfo, error)
+	XInfoGroups(key string) ([]*stream.GroupInfo, error)
+	XInfoConsumers(key, groupName string) ([]*stream.ConsumerInfo, error)
+	XPending(key, groupName string, start, end stream.StreamID, count int64, consumerName string) (*stream.PendingInfo, error)
+	XAck(key, groupName string, ids []stream.StreamID) (int64, error)
+	CleanupBlockedClients(clientID string)
+	GetStreamInfo(key string) (*stream.Stream, bool)
 }
 
 // CommonStorage interface for common operations across all data types

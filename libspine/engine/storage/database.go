@@ -3,6 +3,8 @@ package storage
 import (
 	"sync"
 	"time"
+	
+	"spine-go/libspine/engine/storage/stream"
 )
 
 // ValueType represents the type of a Redis value
@@ -46,6 +48,7 @@ type Database struct {
 	SetStorage    SetStorage
 	ZSetStorage   ZSetStorage
 	BitmapStorage BitmapStorage
+	StreamStorage StreamStorage
 	CommonStorage CommonStorage
 }
 
@@ -64,6 +67,7 @@ func NewDatabase(dbNum int) *Database {
 	db.SetStorage = NewSetStorage(db)
 	db.ZSetStorage = NewZSetStorage(db)
 	db.BitmapStorage = NewBitmapStorage(db)
+	db.StreamStorage = stream.NewStreamStorage(db)
 	db.CommonStorage = NewCommonStorage(db)
 	
 	return db
