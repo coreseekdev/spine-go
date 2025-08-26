@@ -72,6 +72,15 @@ type ZSetStorage interface {
 	ZCard(key string) int64
 }
 
+// BitmapStorage interface for bitmap operations
+type BitmapStorage interface {
+	SetBit(key string, offset int64, value int) (int, error)
+	GetBit(key string, offset int64) (int, error)
+	BitCount(key string, start, end int64) (int64, error)
+	BitPos(key string, bit int, start, end int64) (int64, error)
+	BitOp(operation string, destkey string, keys []string) (int64, error)
+}
+
 // CommonStorage interface for common operations across all data types
 type CommonStorage interface {
 	Exists(key string) bool

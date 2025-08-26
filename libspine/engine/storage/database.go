@@ -45,6 +45,7 @@ type Database struct {
 	ListStorage   ListStorage
 	SetStorage    SetStorage
 	ZSetStorage   ZSetStorage
+	BitmapStorage BitmapStorage
 	CommonStorage CommonStorage
 }
 
@@ -62,6 +63,7 @@ func NewDatabase(dbNum int) *Database {
 	db.ListStorage = NewListStorage(db)
 	db.SetStorage = NewSetStorage(db)
 	db.ZSetStorage = NewZSetStorage(db)
+	db.BitmapStorage = NewBitmapStorage(db)
 	db.CommonStorage = NewCommonStorage(db)
 	
 	return db

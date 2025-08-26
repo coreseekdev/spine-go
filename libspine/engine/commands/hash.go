@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"strconv"
 
 	"spine-go/libspine/engine"
 	"spine-go/libspine/engine/storage"
@@ -615,30 +616,332 @@ func (c *HLenCommand) ModifiesData() bool {
 	return false
 }
 
-// Placeholder implementations for remaining hash commands
 type HKeysCommand struct{}
-func (c *HKeysCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *HKeysCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "HKEYS", Categories: []engine.CommandCategory{engine.CategoryHash}} }
+
+func (c *HKeysCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 1 {
+		return fmt.Errorf("wrong number of arguments for 'hkeys' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	hashStorage := ctx.Database.HashStorage
+	fields := hashStorage.HKeys(key)
+
+	// Convert to interface slice
+	result := make([]interface{}, len(fields))
+	for i, field := range fields {
+		result[i] = field
+	}
+
+	return ctx.RespWriter.WriteArray(result)
+}
+
+func (c *HKeysCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "HKEYS",
+		Summary:      "Get all the fields in a hash",
+		Syntax:       "HKEYS key",
+		Categories:   []engine.CommandCategory{engine.CategoryHash},
+		MinArgs:      1,
+		MaxArgs:      1,
+		ModifiesData: false,
+	}
+}
+
 func (c *HKeysCommand) ModifiesData() bool { return false }
 
 type HValsCommand struct{}
-func (c *HValsCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *HValsCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "HVALS", Categories: []engine.CommandCategory{engine.CategoryHash}} }
+
+func (c *HValsCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 1 {
+		return fmt.Errorf("wrong number of arguments for 'hvals' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	hashStorage := ctx.Database.HashStorage
+	values := hashStorage.HVals(key)
+
+	// Convert to interface slice
+	result := make([]interface{}, len(values))
+	for i, value := range values {
+		result[i] = value
+	}
+
+	return ctx.RespWriter.WriteArray(result)
+}
+
+func (c *HValsCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "HVALS",
+		Summary:      "Get all the values in a hash",
+		Syntax:       "HVALS key",
+		Categories:   []engine.CommandCategory{engine.CategoryHash},
+		MinArgs:      1,
+		MaxArgs:      1,
+		ModifiesData: false,
+	}
+}
+
 func (c *HValsCommand) ModifiesData() bool { return false }
 
 type HSetNXCommand struct{}
-func (c *HSetNXCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *HSetNXCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "HSETNX", Categories: []engine.CommandCategory{engine.CategoryHash}} }
+
+func (c *HSetNXCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 3 {
+		return fmt.Errorf("wrong number of arguments for 'hsetnx' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	fieldValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	field, ok := fieldValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid field")
+	}
+
+	valueValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	value, ok := valueValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid value")
+	}
+
+	hashStorage := ctx.Database.HashStorage
+
+	// Check if field already exists
+	if hashStorage.HExists(key, field) {
+		return ctx.RespWriter.WriteInteger(0) // Field exists, no operation
+	}
+
+	// Set the field since it doesn't exist
+	_, err = hashStorage.HSet(key, field, value)
+	if err != nil {
+		return err
+	}
+
+	return ctx.RespWriter.WriteInteger(1) // Field was set
+}
+
+func (c *HSetNXCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "HSETNX",
+		Summary:      "Set the value of a hash field, only if the field does not exist",
+		Syntax:       "HSETNX key field value",
+		Categories:   []engine.CommandCategory{engine.CategoryHash},
+		MinArgs:      3,
+		MaxArgs:      3,
+		ModifiesData: true,
+	}
+}
+
 func (c *HSetNXCommand) ModifiesData() bool { return true }
 
+// Placeholder implementations for remaining hash commands
 type HIncrByCommand struct{}
-func (c *HIncrByCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *HIncrByCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "HINCRBY", Categories: []engine.CommandCategory{engine.CategoryHash}} }
+
+func (c *HIncrByCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 3 {
+		return fmt.Errorf("wrong number of arguments for 'hincrby' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	fieldValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	field, ok := fieldValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid field")
+	}
+
+	incrValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	incrStr, ok := incrValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid increment")
+	}
+
+	increment, err := strconv.ParseInt(incrStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid increment value")
+	}
+
+	hashStorage := ctx.Database.HashStorage
+
+	// Get current value
+	currentStr, exists := hashStorage.HGet(key, field)
+	var current int64 = 0
+	if exists {
+		current, err = strconv.ParseInt(currentStr, 10, 64)
+		if err != nil {
+			return fmt.Errorf("hash value is not an integer")
+		}
+	}
+
+	// Calculate new value
+	newValue := current + increment
+
+	// Set new value
+	_, err = hashStorage.HSet(key, field, strconv.FormatInt(newValue, 10))
+	if err != nil {
+		return err
+	}
+
+	return ctx.RespWriter.WriteInteger(newValue)
+}
+
+func (c *HIncrByCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "HINCRBY",
+		Summary:      "Increment the integer value of a hash field by the given number",
+		Syntax:       "HINCRBY key field increment",
+		Categories:   []engine.CommandCategory{engine.CategoryHash},
+		MinArgs:      3,
+		MaxArgs:      3,
+		ModifiesData: true,
+	}
+}
+
 func (c *HIncrByCommand) ModifiesData() bool { return true }
 
 type HIncrByFloatCommand struct{}
-func (c *HIncrByFloatCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *HIncrByFloatCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "HINCRBYFLOAT", Categories: []engine.CommandCategory{engine.CategoryHash}} }
+
+func (c *HIncrByFloatCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 3 {
+		return fmt.Errorf("wrong number of arguments for 'hincrbyfloat' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	fieldValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	field, ok := fieldValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid field")
+	}
+
+	incrValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	incrStr, ok := incrValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid increment")
+	}
+
+	increment, err := strconv.ParseFloat(incrStr, 64)
+	if err != nil {
+		return fmt.Errorf("invalid increment value")
+	}
+
+	hashStorage := ctx.Database.HashStorage
+
+	// Get current value
+	currentStr, exists := hashStorage.HGet(key, field)
+	var current float64 = 0.0
+	if exists {
+		current, err = strconv.ParseFloat(currentStr, 64)
+		if err != nil {
+			return fmt.Errorf("hash value is not a valid float")
+		}
+	}
+
+	// Calculate new value
+	newValue := current + increment
+
+	// Set new value
+	_, err = hashStorage.HSet(key, field, strconv.FormatFloat(newValue, 'g', -1, 64))
+	if err != nil {
+		return err
+	}
+
+	return ctx.RespWriter.WriteBulkString(strconv.FormatFloat(newValue, 'g', -1, 64))
+}
+
+func (c *HIncrByFloatCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "HINCRBYFLOAT",
+		Summary:      "Increment the float value of a hash field by the given amount",
+		Syntax:       "HINCRBYFLOAT key field increment",
+		Categories:   []engine.CommandCategory{engine.CategoryHash},
+		MinArgs:      3,
+		MaxArgs:      3,
+		ModifiesData: true,
+	}
+}
+
 func (c *HIncrByFloatCommand) ModifiesData() bool { return true }
 
 type HScanCommand struct{}
@@ -703,8 +1006,46 @@ func (c *HScanCommand) GetInfo() *engine.CommandInfo {
 func (c *HScanCommand) ModifiesData() bool { return false }
 
 type HStrLenCommand struct{}
-func (c *HStrLenCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *HStrLenCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "HSTRLEN", Categories: []engine.CommandCategory{engine.CategoryHash}} }
+
+func (c *HStrLenCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 2 {
+		return fmt.Errorf("wrong number of arguments for 'hstrlen' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	fieldValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	field, ok := fieldValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid field")
+	}
+
+	hashStorage := ctx.Database.HashStorage
+	value, exists := hashStorage.HGet(key, field)
+	if !exists {
+		return ctx.RespWriter.WriteInteger(0)
+	}
+
+	return ctx.RespWriter.WriteInteger(int64(len(value)))
+}
+func (c *HStrLenCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{Name: "HSTRLEN", Categories: []engine.CommandCategory{engine.CategoryHash}}
+}
 func (c *HStrLenCommand) ModifiesData() bool { return false }
 
 type HRandFieldCommand struct{}
@@ -740,7 +1081,7 @@ func (c *HRandFieldCommand) Execute(ctx *engine.CommandContext) error {
 		if !ok {
 			return fmt.Errorf("invalid count")
 		}
-		
+
 		// Parse count (simplified - just use 1 for now)
 		_ = countStr
 		count = 1

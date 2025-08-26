@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strconv"
 
 	"spine-go/libspine/engine"
@@ -234,11 +235,25 @@ func (c *ClientIDCommand) Execute(ctx *engine.CommandContext) error {
 		return fmt.Errorf("wrong number of arguments for 'client id' command")
 	}
 
-	// Generate a simple client ID based on connection info
-	clientID := int64(1)
-	if ctx.TransportCtx != nil && ctx.TransportCtx.ConnInfo != nil && ctx.TransportCtx.ConnInfo.Remote != nil {
-		// Use connection address hash as simple ID
-		clientID = int64(len(ctx.TransportCtx.ConnInfo.Remote.String()))
+	// Use the unique connection ID from TransportCtx
+	clientID := int64(1) // Default fallback
+	if ctx.TransportCtx != nil && ctx.TransportCtx.ConnInfo != nil && ctx.TransportCtx.ConnInfo.ID != "" {
+		// Parse the connection ID string to int64
+		// If the ID is not numeric, use FNV-1a 64-bit hash of the ID string
+		if id, err := strconv.ParseInt(ctx.TransportCtx.ConnInfo.ID, 10, 64); err == nil {
+			clientID = id
+		} else {
+			// Use FNV-1a hash to generate a native 64-bit hash-based client ID
+			hasher := fnv.New64a()
+			hasher.Write([]byte(ctx.TransportCtx.ConnInfo.ID))
+			hash := hasher.Sum64()
+			
+			// Convert to int64 and ensure positive value
+			clientID = int64(hash)
+			if clientID < 0 {
+				clientID = -clientID
+			}
+		}
 	}
 
 	return ctx.RespWriter.WriteInteger(clientID)

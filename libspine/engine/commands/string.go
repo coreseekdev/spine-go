@@ -710,63 +710,713 @@ func (c *IncrCommand) ModifiesData() bool {
 
 // Placeholder implementations for remaining commands
 type GetSetCommand struct{}
-func (c *GetSetCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *GetSetCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "GETSET", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *GetSetCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 2 {
+		return fmt.Errorf("wrong number of arguments for 'getset' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	newValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	value, ok := newValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid value")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	oldValue, exists := stringStorage.Get(key)
+	stringStorage.Set(key, value, nil)
+
+	if !exists {
+		return ctx.RespWriter.WriteNull()
+	}
+	return ctx.RespWriter.WriteBulkString(oldValue)
+}
+
+func (c *GetSetCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "GETSET",
+		Summary:      "Set the string value of a key and return its old value",
+		Syntax:       "GETSET key value",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      2,
+		MaxArgs:      2,
+		ModifiesData: true,
+	}
+}
+
 func (c *GetSetCommand) ModifiesData() bool { return true }
 
 type GetDelCommand struct{}
-func (c *GetDelCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *GetDelCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "GETDEL", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *GetDelCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 1 {
+		return fmt.Errorf("wrong number of arguments for 'getdel' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	value, exists := stringStorage.Get(key)
+	if exists {
+		stringStorage.Del(key)
+		return ctx.RespWriter.WriteBulkString(value)
+	}
+	return ctx.RespWriter.WriteNull()
+}
+
+func (c *GetDelCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "GETDEL",
+		Summary:      "Get the value of a key and delete the key",
+		Syntax:       "GETDEL key",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      1,
+		MaxArgs:      1,
+		ModifiesData: true,
+	}
+}
+
 func (c *GetDelCommand) ModifiesData() bool { return true }
 
 type GetExCommand struct{}
-func (c *GetExCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *GetExCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "GETEX", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *GetExCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs < 1 {
+		return fmt.Errorf("wrong number of arguments for 'getex' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	value, exists := stringStorage.Get(key)
+	if !exists {
+		return ctx.RespWriter.WriteNull()
+	}
+
+	// For now, just return the value without expiration handling
+	// Full GETEX implementation would require expiration argument parsing
+	return ctx.RespWriter.WriteBulkString(value)
+}
+
+func (c *GetExCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "GETEX",
+		Summary:      "Get the value of key and optionally set its expiration",
+		Syntax:       "GETEX key [EX seconds|PX milliseconds|EXAT timestamp|PXAT milliseconds-timestamp|PERSIST]",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      1,
+		MaxArgs:      -1,
+		ModifiesData: true,
+	}
+}
+
 func (c *GetExCommand) ModifiesData() bool { return true }
 
 type GetRangeCommand struct{}
-func (c *GetRangeCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *GetRangeCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "GETRANGE", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *GetRangeCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 3 {
+		return fmt.Errorf("wrong number of arguments for 'getrange' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	startValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	startStr, ok := startValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid start")
+	}
+
+	start, err := strconv.ParseInt(startStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid start")
+	}
+
+	endValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	endStr, ok := endValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid end")
+	}
+
+	end, err := strconv.ParseInt(endStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid end")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	value, exists := stringStorage.Get(key)
+	if !exists {
+		return ctx.RespWriter.WriteBulkString("")
+	}
+
+	// Handle negative indices
+	length := int64(len(value))
+	if start < 0 {
+		start = length + start
+	}
+	if end < 0 {
+		end = length + end
+	}
+
+	// Clamp to valid range
+	if start < 0 {
+		start = 0
+	}
+	if end >= length {
+		end = length - 1
+	}
+
+	if start > end || start >= length {
+		return ctx.RespWriter.WriteBulkString("")
+	}
+
+	result := value[start : end+1]
+	return ctx.RespWriter.WriteBulkString(result)
+}
+
+func (c *GetRangeCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "GETRANGE",
+		Summary:      "Get a substring of the string stored at a key",
+		Syntax:       "GETRANGE key start end",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      3,
+		MaxArgs:      3,
+		ModifiesData: false,
+	}
+}
+
 func (c *GetRangeCommand) ModifiesData() bool { return false }
 
 type SetRangeCommand struct{}
-func (c *SetRangeCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *SetRangeCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "SETRANGE", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *SetRangeCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 3 {
+		return fmt.Errorf("wrong number of arguments for 'setrange' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	offsetValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	offsetStr, ok := offsetValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid offset")
+	}
+
+	offset, err := strconv.ParseInt(offsetStr, 10, 64)
+	if err != nil || offset < 0 {
+		return fmt.Errorf("invalid offset")
+	}
+
+	valueArg, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	value, ok := valueArg.AsString()
+	if !ok {
+		return fmt.Errorf("invalid value")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	existingValue, exists := stringStorage.Get(key)
+	if !exists {
+		existingValue = ""
+	}
+
+	// Extend string if necessary
+	requiredLength := int(offset) + len(value)
+	if len(existingValue) < requiredLength {
+		// Pad with null bytes
+		padding := make([]byte, requiredLength-len(existingValue))
+		existingValue += string(padding)
+	}
+
+	// Replace substring
+	result := []byte(existingValue)
+	copy(result[offset:], []byte(value))
+
+	stringStorage.Set(key, string(result), nil)
+	return ctx.RespWriter.WriteInteger(int64(len(result)))
+}
+
+func (c *SetRangeCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "SETRANGE",
+		Summary:      "Overwrite part of a string at key starting at the specified offset",
+		Syntax:       "SETRANGE key offset value",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      3,
+		MaxArgs:      3,
+		ModifiesData: true,
+	}
+}
+
 func (c *SetRangeCommand) ModifiesData() bool { return true }
 
 type StrLenCommand struct{}
-func (c *StrLenCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *StrLenCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "STRLEN", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *StrLenCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 1 {
+		return fmt.Errorf("wrong number of arguments for 'strlen' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	length := stringStorage.StrLen(key)
+	return ctx.RespWriter.WriteInteger(length)
+}
+
+func (c *StrLenCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "STRLEN",
+		Summary:      "Get the length of the value stored in a key",
+		Syntax:       "STRLEN key",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      1,
+		MaxArgs:      1,
+		ModifiesData: false,
+	}
+}
+
 func (c *StrLenCommand) ModifiesData() bool { return false }
 
 type AppendCommand struct{}
-func (c *AppendCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *AppendCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "APPEND", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *AppendCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 2 {
+		return fmt.Errorf("wrong number of arguments for 'append' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	valueArg, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	value, ok := valueArg.AsString()
+	if !ok {
+		return fmt.Errorf("invalid value")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	newLength, err := stringStorage.Append(key, value)
+	if err != nil {
+		return err
+	}
+
+	return ctx.RespWriter.WriteInteger(newLength)
+}
+
+func (c *AppendCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "APPEND",
+		Summary:      "Append a value to a key",
+		Syntax:       "APPEND key value",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      2,
+		MaxArgs:      2,
+		ModifiesData: true,
+	}
+}
+
 func (c *AppendCommand) ModifiesData() bool { return true }
 
 type IncrByCommand struct{}
-func (c *IncrByCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *IncrByCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "INCRBY", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *IncrByCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 2 {
+		return fmt.Errorf("wrong number of arguments for 'incrby' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	incrementValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	incrementStr, ok := incrementValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid increment")
+	}
+
+	increment, err := strconv.ParseInt(incrementStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid increment")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	newValue, err := stringStorage.IncrBy(key, increment)
+	if err != nil {
+		return err
+	}
+
+	return ctx.RespWriter.WriteInteger(newValue)
+}
+
+func (c *IncrByCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "INCRBY",
+		Summary:      "Increment the integer value of a key by the given amount",
+		Syntax:       "INCRBY key increment",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      2,
+		MaxArgs:      2,
+		ModifiesData: true,
+	}
+}
+
 func (c *IncrByCommand) ModifiesData() bool { return true }
 
 type IncrByFloatCommand struct{}
-func (c *IncrByFloatCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *IncrByFloatCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "INCRBYFLOAT", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *IncrByFloatCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 2 {
+		return fmt.Errorf("wrong number of arguments for 'incrbyfloat' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	incrementValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	incrementStr, ok := incrementValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid increment")
+	}
+
+	increment, err := strconv.ParseFloat(incrementStr, 64)
+	if err != nil {
+		return fmt.Errorf("invalid increment")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	// Get current value
+	currentStr, exists := stringStorage.Get(key)
+	var current float64
+	if exists {
+		current, err = strconv.ParseFloat(currentStr, 64)
+		if err != nil {
+			return fmt.Errorf("value is not a valid float")
+		}
+	}
+
+	// Calculate new value
+	newValue := current + increment
+	newValueStr := strconv.FormatFloat(newValue, 'f', -1, 64)
+
+	// Store new value
+	stringStorage.Set(key, newValueStr, nil)
+
+	return ctx.RespWriter.WriteBulkString(newValueStr)
+}
+
+func (c *IncrByFloatCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "INCRBYFLOAT",
+		Summary:      "Increment the float value of a key by the given amount",
+		Syntax:       "INCRBYFLOAT key increment",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      2,
+		MaxArgs:      2,
+		ModifiesData: true,
+	}
+}
+
 func (c *IncrByFloatCommand) ModifiesData() bool { return true }
 
 type DecrCommand struct{}
-func (c *DecrCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *DecrCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "DECR", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *DecrCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 1 {
+		return fmt.Errorf("wrong number of arguments for 'decr' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	newValue, err := stringStorage.Decr(key)
+	if err != nil {
+		return err
+	}
+
+	return ctx.RespWriter.WriteInteger(newValue)
+}
+
+func (c *DecrCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "DECR",
+		Summary:      "Decrement the integer value of a key by one",
+		Syntax:       "DECR key",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      1,
+		MaxArgs:      1,
+		ModifiesData: true,
+	}
+}
+
 func (c *DecrCommand) ModifiesData() bool { return true }
 
 type DecrByCommand struct{}
-func (c *DecrByCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *DecrByCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "DECRBY", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *DecrByCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs != 2 {
+		return fmt.Errorf("wrong number of arguments for 'decrby' command")
+	}
+
+	keyValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	key, ok := keyValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid key")
+	}
+
+	decrementValue, err := ctx.ReqReader.NextValue()
+	if err != nil {
+		return err
+	}
+	decrementStr, ok := decrementValue.AsString()
+	if !ok {
+		return fmt.Errorf("invalid decrement")
+	}
+
+	decrement, err := strconv.ParseInt(decrementStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid decrement")
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	newValue, err := stringStorage.DecrBy(key, decrement)
+	if err != nil {
+		return err
+	}
+
+	return ctx.RespWriter.WriteInteger(newValue)
+}
+
+func (c *DecrByCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "DECRBY",
+		Summary:      "Decrement the integer value of a key by the given number",
+		Syntax:       "DECRBY key decrement",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      2,
+		MaxArgs:      2,
+		ModifiesData: true,
+	}
+}
+
 func (c *DecrByCommand) ModifiesData() bool { return true }
 
 type MSetnxCommand struct{}
-func (c *MSetnxCommand) Execute(ctx *engine.CommandContext) error { return ctx.RespWriter.WriteError("ERR not implemented") }
-func (c *MSetnxCommand) GetInfo() *engine.CommandInfo { return &engine.CommandInfo{Name: "MSETNX", Categories: []engine.CommandCategory{engine.CategoryString}} }
+
+func (c *MSetnxCommand) Execute(ctx *engine.CommandContext) error {
+	nargs, err := ctx.ReqReader.NArgs()
+	if err != nil {
+		return err
+	}
+
+	if nargs < 2 || nargs%2 != 0 {
+		return fmt.Errorf("wrong number of arguments for 'msetnx' command")
+	}
+
+	pairs := make(map[string]string)
+	keys := make([]string, 0, nargs/2)
+
+	for i := 0; i < nargs; i += 2 {
+		keyValue, err := ctx.ReqReader.NextValue()
+		if err != nil {
+			return err
+		}
+		key, ok := keyValue.AsString()
+		if !ok {
+			return fmt.Errorf("invalid key")
+		}
+
+		valueArg, err := ctx.ReqReader.NextValue()
+		if err != nil {
+			return err
+		}
+		value, ok := valueArg.AsString()
+		if !ok {
+			return fmt.Errorf("invalid value")
+		}
+
+		pairs[key] = value
+		keys = append(keys, key)
+	}
+
+	stringStorage := ctx.Database.StringStorage
+	// Check if any key already exists
+	for _, key := range keys {
+		if stringStorage.Exists(key) {
+			return ctx.RespWriter.WriteInteger(0)
+		}
+	}
+
+	// Set all keys
+	err = stringStorage.MSet(pairs)
+	if err != nil {
+		return err
+	}
+
+	return ctx.RespWriter.WriteInteger(1)
+}
+
+func (c *MSetnxCommand) GetInfo() *engine.CommandInfo {
+	return &engine.CommandInfo{
+		Name:         "MSETNX",
+		Summary:      "Set multiple keys to multiple values, only if none of the keys exist",
+		Syntax:       "MSETNX key value [key value ...]",
+		Categories:   []engine.CommandCategory{engine.CategoryString},
+		MinArgs:      2,
+		MaxArgs:      -1,
+		ModifiesData: true,
+	}
+}
+
 func (c *MSetnxCommand) ModifiesData() bool { return true }
 
 // SubstrCommand implements the SUBSTR command
